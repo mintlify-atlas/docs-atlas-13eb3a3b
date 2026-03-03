@@ -1,0 +1,79 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "ScrapeAccraProperties",
+  "projectDescription": "A Python CLI scraper for rental properties in Accra using Scrapy and Playwright to collect listings from Jiji Ghana and Meqasa.",
+  "theme": "aspen",
+  "primaryColor": "#E63946",
+  "lightColor": "#F1FAEE",
+  "darkColor": "#1D3557",
+  "navigation": {
+    "groups": [
+      {
+        "group": "Get Started",
+        "pages": [
+          "introduction",
+          "installation",
+          "quickstart"
+        ]
+      },
+      {
+        "group": "Core Concepts",
+        "pages": [
+          "concepts/workflow",
+          "concepts/spiders",
+          "concepts/data-schema"
+        ]
+      },
+      {
+        "group": "Usage",
+        "pages": [
+          "usage/interactive-mode",
+          "usage/direct-commands",
+          "usage/resume-mode"
+        ]
+      },
+      {
+        "group": "Commands",
+        "pages": [
+          "commands/collect-urls",
+          "commands/scrape-listings",
+          "commands/resume-scrape"
+        ]
+      },
+      {
+        "group": "Configuration",
+        "pages": [
+          "configuration/settings",
+          "configuration/playwright",
+          "configuration/output"
+        ]
+      },
+      {
+        "group": "Reference",
+        "pages": [
+          "reference/spiders",
+          "reference/data-cleaning",
+          "reference/troubleshooting"
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Interactive CLI with Rich progress UI and multi-site selection",
+    "JavaScript-rendered scraping using Scrapy and Playwright (Chromium)",
+    "Two-phase workflow: URL collection then listing extraction",
+    "Incremental CSV writes with URL deduplication and resume support",
+    "Automatic data cleaning for Jiji listings with location normalization",
+    "Support for both Jiji Ghana and Meqasa rental platforms"
+  ],
+  "publicApiSurface": [
+    "main.py - Interactive CLI entry point",
+    "scrapy crawl jiji_urls - Collect Jiji listing URLs",
+    "scrapy crawl jiji_listings - Scrape Jiji listing details",
+    "scrapy crawl meqasa_urls - Collect Meqasa listing URLs",
+    "scrapy crawl meqasa_listings - Scrape Meqasa listing details",
+    "clean.py - Clean and normalize Jiji data",
+    "PropertyBaseSpider - Base spider class with progress tracking",
+    "SpiderProgressTracker - Rich UI progress tracker"
+  ]
+}
