@@ -1,0 +1,665 @@
+---
+title: Data Cleaning
+description: Jiji data cleaning pipeline with locality normalization and filtering
+---
+
+## Overview
+
+The `clean.py` module processes raw Jiji listing data to produce analysis-ready datasets. It handles:
+
+- Locality extraction and normalization
+- Sale and short-term rental filtering
+- Property attribute expansion
+- Standardized output formatting
+
+<Warning>
+  Data cleaning is **Jiji-only**. Meqasa data (`meqasa_data.csv`) is not currently processed by the cleaning pipeline.
+</Warning>
+
+**Location:** `clean.py`  
+**Input:** `outputs/data/jiji_data.csv`  
+**Output:** `outputs/data/raw.csv`
+
+---
+
+## Quick Start
+
+### Automatic Cleaning
+
+The cleaning script runs automatically after Jiji listing scrapes complete:
+
+```bash
+python main.py
+# Select: "Scrape listing details" → "Jiji only"
+# After scrape completes, clean.py runs automatically
+```
+
+### Manual Cleaning
+
+```bash
+python -c "from clean import clean_jiji_csv; clean_jiji_csv()"
+```
+
+### Custom Paths
+
+```python
+from clean import clean_jiji_csv
+
+clean_jiji_csv(
+    input_csv="outputs/data/jiji_data.csv",
+    output_csv="outputs/data/custom_output.csv"
+)
+```
+
+---
+
+## Cleaning Pipeline
+
+### 1. Locality Extraction
+
+Extracts neighborhood from full location string:
+
+```python
+def extract_locality(location):
+    parts = str(location).split(",")
+    return parts[1].strip() if len(parts) >= 3 else parts[0].strip()
+```
+
+**Examples:**
+
+| Input Location | Extracted Locality |
+|----------------|--------------------|
+| `Accra Metropolitan, Osu, Greater Accra` | `Osu` |
+| `Accra Metropolitan, Greater Accra` | `Accra Metropolitan` |
+| `East Legon` | `East Legon` |
+
+**Implementation:**
+```python
+df["locality"] = df["location"].apply(extract_locality)
+df = df.drop(columns=["location"])
+```
+
+### 2. House Type Normalization
+
+Fills missing house types with default value:
+
+```python
+df["house_type"] = df["house_type"].fillna("Bedsitter")
+```
+
+### 3. Bedroom/Bathroom Cleaning
+
+Extracts numeric values and removes listings with missing bed/bath counts:
+
+```python
+df = df.dropna(subset=["bathrooms", "bedrooms"])
+for col in ["bathrooms", "bedrooms"]:
+    df[col] = df[col].str.split().str[0]
+```
+
+**Examples:**
+
+| Raw Value | Cleaned Value |
+|-----------|---------------|
+| `3 Bedrooms` | `3` |
+| `2 Bathrooms` | `2` |
+| `Studio` | Dropped (NaN) |
+
+### 4. Price Normalization
+
+Converts price strings to numeric values:
+
+```python
+df["price"] = (
+    df["price"]
+    .str.replace("GH₵ ", "", regex=False)
+    .str.replace(",", "", regex=False)
+    .astype(float)
+)
+```
+
+**Examples:**
+
+| Raw Price | Cleaned Price |
+|-----------|---------------|
+| `GH₵ 3,500` | `3500.0` |
+| `GH₵ 12,000` | `12000.0` |
+
+### 5. Property Expansion
+
+Expands serialized property dictionary into separate columns:
+
+```python
+def expand_column(df, col, sep=None):
+    if sep:
+        encoded = df[col].str.strip().str.get_dummies(sep=sep)
+        encoded.columns = encoded.columns.str.strip()
+    else:
+        encoded = df[col].apply(ast.literal_eval).apply(pd.Series)
+    return df.join(encoded).drop(columns=[col])
+
+df = expand_column(df, "properties")
+```
+
+**Example:**
+
+**Before:**
+```python
+properties = '{"Condition": "Newly Built", "Furnishing": "Furnished"}'
+```
+
+**After (new columns):**
+```
+Condition       Furnishing
+Newly Built     Furnished
+```
+
+### 6. Amenity Expansion
+
+Expands comma-separated amenities into binary columns:
+
+```python
+df = expand_column(df, "amenities", sep=",")
+```
+
+**Example:**
+
+**Before:**
+```
+amenities = "Wi-Fi, 24-hour Electricity, Hot Water"
+```
+
+**After (new columns):**
+```
+Wi-Fi    24-hour Electricity    Hot Water
+1        1                      1
+```
+
+### 7. Facilities Merging
+
+Merges `Facilities` column with existing amenity columns (if present):
+
+```python
+if "Facilities" in df.columns:
+    facilities = df["Facilities"].str.strip().str.get_dummies(sep=",")
+    facilities.columns = facilities.columns.str.strip()
+    for col in facilities.columns:
+        if col in df.columns:
+            df[col] = df[[col]].join(facilities[[col]], rsuffix="_new").max(axis=1)
+        else:
+            df[col] = facilities[col]
+    df = df.drop(columns=["Facilities"])
+```
+
+Takes maximum value when same amenity appears in both sources.
+
+### 8. Sale/Period Filtering
+
+Removes listings containing sale or short-term rental keywords in title or description.
+
+#### Sale Patterns
+
+```python
+SALE_PATTERNS = [
+    "for sale", "on sale", "sale", "sale only", "selling", "sell", "sold",
+    "property for sale", "house for sale", "apartment for sale",
+    "buy", "buyer", "title deed", "deed", "closing", "escrow", "transfer",
+    "down payment", "mortgage", "loan", "financing", "cash only",
+    "investment", "roi", "yield", "capital gain",
+    "airbnb", "air bnb", "booking.com", "vrbo"
+]
+```
+
+#### Period Patterns
+
+```python
+PERIOD_PATTERNS = [
+    "per night", "nightly", "per day", "daily", "by the day",
+    "short term", "short-term", "weekly", "per week", "weekend",
+    "airbnb", "air bnb", "business short", "holidays", "short stay",
+    "holiday rental", "vacation rental", "tourist rental",
+    "guesthouse", "guest house"
+]
+```
+
+#### Implementation
+
+```python
+regex = "|".join(re.escape(p) for p in SALE_PATTERNS + PERIOD_PATTERNS)
+text = (df["title"].fillna("") + " " + df["description"].fillna("")).str.lower()
+df = df[~text.str.contains(regex, na=False)]
+```
+
+**Removes listings like:**
+- "3 Bedroom Apartment for Sale"
+- "Luxury Flat - Short Term Available"
+- "Airbnb Investment Property"
+- "Daily/Nightly Rental - GH₵ 200 per night"
+
+### 9. Locality Normalization
+
+Standardizes neighborhood names using replacement mappings:
+
+```python
+LOCALITY_REPLACEMENTS = {
+    "Dworwulu": "Dzorwulu",
+    "Lartebiokoshie": "Lartebiokorshie",
+    "Ashongman Estate": "Ashongman",
+    "Ashoman Estate": "Ashongman",
+    "Old Ashongman": "Ashongman",
+    "Old Ashoman": "Ashongman",
+    "Ashoman": "Ashongman",
+    "Greater Accra": "Other",
+    "Ledzokuku-Krowor": "Teshie",
+    "South Shiashie": "East Legon",
+    "Okponglo": "East Legon",
+    "Little Legon": "East Legon",
+    "Abofu": "Achimota",
+    "Akweteyman": "Achimota",
+    "Banana Inn": "Dansoman",
+    "South La": "Labadi",
+    "Bubuashie": "Kaneshie"
+}
+
+df["locality"] = df["locality"].replace(LOCALITY_REPLACEMENTS)
+```
+
+**Purpose:** Standardizes spelling variations and consolidates sub-neighborhoods
+
+**Examples:**
+
+| Raw Locality | Normalized Locality |
+|--------------|---------------------|
+| `Dworwulu` | `Dzorwulu` |
+| `Old Ashongman` | `Ashongman` |
+| `South Shiashie` | `East Legon` |
+| `Greater Accra` | `Other` |
+
+### 10. Location Code Assignment
+
+Creates broader location groupings:
+
+```python
+LOC_REPLACEMENTS = {
+    "Circle": "Nkrumah Circle",
+    "Anyaa": "Anyaa Market",
+    "Ridge": "North Ridge",
+    "Dome": "Dome Market",
+    "Abokobi": "Abokobi Station",
+    "Nungua": "Nungua Central",
+    "Other": "Accra Metropolitan"
+}
+
+df["loc"] = df["locality"].replace(LOC_REPLACEMENTS)
+```
+
+**Use case:** Creates `loc` field for broader geographic grouping while preserving granular `locality` field
+
+### 11. Column Ordering
+
+Selects and orders final output columns:
+
+```python
+FINAL_COLUMNS = [
+    "url", "fetch_date", "house_type", "bathrooms", "bedrooms", "price",
+    "locality", "Condition", "Furnishing", "Property Size",
+    "24-hour Electricity", "Air Conditioning", "Apartment", "Balcony",
+    "Chandelier", "Dining Area", "Dishwasher", "Hot Water",
+    "Kitchen Cabinets", "Kitchen Shelf", "Microwave", "Pop Ceiling",
+    "Pre-Paid Meter", "Refrigerator", "TV", "Tiled Floor",
+    "Wardrobe", "Wi-Fi", "loc"
+]
+
+df = df[[col for col in FINAL_COLUMNS if col in df.columns]].copy()
+```
+
+Only includes columns that exist in the dataset.
+
+---
+
+## Output Schema
+
+### Core Fields
+
+<ParamField path="url" type="str">
+  Original listing URL
+</ParamField>
+
+<ParamField path="fetch_date" type="str">
+  Date listing was scraped (YYYY-MM-DD format)
+</ParamField>
+
+<ParamField path="house_type" type="str">
+  Property type (e.g., "Apartment", "Self Contain", "Bedsitter")
+</ParamField>
+
+<ParamField path="bathrooms" type="str">
+  Number of bathrooms (numeric string)
+</ParamField>
+
+<ParamField path="bedrooms" type="str">
+  Number of bedrooms (numeric string)
+</ParamField>
+
+<ParamField path="price" type="float">
+  Monthly rental price in GH₵
+</ParamField>
+
+<ParamField path="locality" type="str">
+  Normalized neighborhood name
+</ParamField>
+
+<ParamField path="loc" type="str">
+  Broader location grouping
+</ParamField>
+
+### Property Attributes
+
+<ParamField path="Condition" type="str">
+  Property condition (e.g., "Newly Built", "Renovated")
+</ParamField>
+
+<ParamField path="Furnishing" type="str">
+  Furnishing status (e.g., "Furnished", "Semi-Furnished", "Unfurnished")
+</ParamField>
+
+<ParamField path="Property Size" type="str">
+  Size specification (if provided)
+</ParamField>
+
+### Amenity Columns (Binary)
+
+All amenity columns are binary (0/1 or NaN):
+
+- `24-hour Electricity`
+- `Air Conditioning`
+- `Apartment`
+- `Balcony`
+- `Chandelier`
+- `Dining Area`
+- `Dishwasher`
+- `Hot Water`
+- `Kitchen Cabinets`
+- `Kitchen Shelf`
+- `Microwave`
+- `Pop Ceiling`
+- `Pre-Paid Meter`
+- `Refrigerator`
+- `TV`
+- `Tiled Floor`
+- `Wardrobe`
+- `Wi-Fi`
+
+---
+
+## API Reference
+
+### clean()
+
+```python
+def clean(df: pd.DataFrame) -> pd.DataFrame
+```
+
+Applies full cleaning pipeline to raw Jiji DataFrame.
+
+**Parameters:**
+- `df` - Raw DataFrame from `jiji_data.csv`
+
+**Returns:**
+- Cleaned DataFrame with normalized localities, expanded amenities, and filtered listings
+
+**Example:**
+```python
+import pandas as pd
+from clean import clean
+
+raw_df = pd.read_csv("outputs/data/jiji_data.csv")
+cleaned_df = clean(raw_df)
+```
+
+### clean_jiji_csv()
+
+```python
+def clean_jiji_csv(
+    input_csv: str | Path = DEFAULT_JIJI_INPUT,
+    output_csv: str | Path = DEFAULT_RAW_OUTPUT,
+) -> pd.DataFrame
+```
+
+End-to-end cleaning function: reads input CSV, applies cleaning, writes output CSV.
+
+**Parameters:**
+- `input_csv` - Path to raw Jiji data (default: `outputs/data/jiji_data.csv`)
+- `output_csv` - Path to write cleaned data (default: `outputs/data/raw.csv`)
+
+**Returns:**
+- Cleaned DataFrame (also written to `output_csv`)
+
+**Example:**
+```python
+from clean import clean_jiji_csv
+
+cleaned_df = clean_jiji_csv(
+    input_csv="data/jiji_raw.csv",
+    output_csv="data/jiji_clean.csv"
+)
+print(f"Cleaned {len(cleaned_df)} listings")
+```
+
+### extract_locality()
+
+```python
+def extract_locality(location: str) -> str
+```
+
+Extracts neighborhood from comma-separated location string.
+
+**Parameters:**
+- `location` - Full location string (e.g., "Accra Metropolitan, Osu, Greater Accra")
+
+**Returns:**
+- Extracted locality (2nd segment if 3+ parts, otherwise 1st segment)
+
+**Example:**
+```python
+from clean import extract_locality
+
+locality = extract_locality("Accra Metropolitan, East Legon, Greater Accra")
+print(locality)  # "East Legon"
+```
+
+### expand_column()
+
+```python
+def expand_column(
+    df: pd.DataFrame,
+    col: str,
+    sep: str | None = None
+) -> pd.DataFrame
+```
+
+Expands serialized column into separate binary/value columns.
+
+**Parameters:**
+- `df` - DataFrame containing column to expand
+- `col` - Column name to expand
+- `sep` - Separator for string splitting (if None, treats as JSON serialized dict/list)
+
+**Returns:**
+- DataFrame with expanded columns (original column dropped)
+
+**Example:**
+```python
+import pandas as pd
+from clean import expand_column
+
+# Expand JSON dict column
+df = pd.DataFrame({"props": ['{"Bedrooms": "3", "Condition": "New"}']})
+df = expand_column(df, "props")
+# New columns: Bedrooms, Condition
+
+# Expand comma-separated column
+df = pd.DataFrame({"amenities": ["Wi-Fi, Hot Water, Parking"]})
+df = expand_column(df, "amenities", sep=",")
+# New columns: Wi-Fi, Hot Water, Parking (all = 1)
+```
+
+---
+
+## Constants Reference
+
+### File Paths
+
+```python
+PROJECT_ROOT = Path(__file__).resolve().parent
+DEFAULT_JIJI_INPUT = PROJECT_ROOT / "outputs" / "data" / "jiji_data.csv"
+DEFAULT_RAW_OUTPUT = PROJECT_ROOT / "outputs" / "data" / "raw.csv"
+```
+
+### Filtering Patterns
+
+<Accordion title="SALE_PATTERNS (37 patterns)">
+  ```python
+  SALE_PATTERNS = [
+      "for sale", "on sale", "sale", "sale only", "selling", "sell", "sold",
+      "property for sale", "house for sale", "apartment for sale",
+      "buy", "buyer", "title deed", "deed", "closing", "escrow", "transfer",
+      "down payment", "mortgage", "loan", "financing", "cash only",
+      "investment", "roi", "yield", "capital gain",
+      "airbnb", "air bnb", "booking.com", "vrbo"
+  ]
+  ```
+</Accordion>
+
+<Accordion title="PERIOD_PATTERNS (20 patterns)">
+  ```python
+  PERIOD_PATTERNS = [
+      "per night", "nightly", "per day", "daily", "by the day",
+      "short term", "short-term", "weekly", "per week", "weekend",
+      "airbnb", "air bnb", "business short", "holidays", "short stay",
+      "holiday rental", "vacation rental", "tourist rental",
+      "guesthouse", "guest house"
+  ]
+  ```
+</Accordion>
+
+### Normalization Mappings
+
+<Accordion title="LOCALITY_REPLACEMENTS (16 mappings)">
+  ```python
+  LOCALITY_REPLACEMENTS = {
+      "Dworwulu": "Dzorwulu",
+      "Lartebiokoshie": "Lartebiokorshie",
+      "Ashongman Estate": "Ashongman",
+      "Ashoman Estate": "Ashongman",
+      "Old Ashongman": "Ashongman",
+      "Old Ashoman": "Ashongman",
+      "Ashoman": "Ashongman",
+      "Greater Accra": "Other",
+      "Ledzokuku-Krowor": "Teshie",
+      "South Shiashie": "East Legon",
+      "Okponglo": "East Legon",
+      "Little Legon": "East Legon",
+      "Abofu": "Achimota",
+      "Akweteyman": "Achimota",
+      "Banana Inn": "Dansoman",
+      "South La": "Labadi",
+      "Bubuashie": "Kaneshie"
+  }
+  ```
+</Accordion>
+
+<Accordion title="LOC_REPLACEMENTS (7 mappings)">
+  ```python
+  LOC_REPLACEMENTS = {
+      "Circle": "Nkrumah Circle",
+      "Anyaa": "Anyaa Market",
+      "Ridge": "North Ridge",
+      "Dome": "Dome Market",
+      "Abokobi": "Abokobi Station",
+      "Nungua": "Nungua Central",
+      "Other": "Accra Metropolitan"
+  }
+  ```
+</Accordion>
+
+<Accordion title="FINAL_COLUMNS (29 columns)">
+  ```python
+  FINAL_COLUMNS = [
+      "url", "fetch_date", "house_type", "bathrooms", "bedrooms", "price",
+      "locality", "Condition", "Furnishing", "Property Size",
+      "24-hour Electricity", "Air Conditioning", "Apartment", "Balcony",
+      "Chandelier", "Dining Area", "Dishwasher", "Hot Water",
+      "Kitchen Cabinets", "Kitchen Shelf", "Microwave", "Pop Ceiling",
+      "Pre-Paid Meter", "Refrigerator", "TV", "Tiled Floor",
+      "Wardrobe", "Wi-Fi", "loc"
+  ]
+  ```
+</Accordion>
+
+---
+
+## Usage Examples
+
+### Example 1: Basic Cleaning
+
+```python
+from clean import clean_jiji_csv
+
+# Clean with defaults
+df = clean_jiji_csv()
+print(f"Cleaned {len(df)} listings")
+print(f"Localities: {df['locality'].unique()}")
+```
+
+### Example 2: Custom Filtering
+
+```python
+import pandas as pd
+from clean import clean
+
+# Load and clean
+raw_df = pd.read_csv("outputs/data/jiji_data.csv")
+cleaned_df = clean(raw_df)
+
+# Additional filtering
+expensive = cleaned_df[cleaned_df["price"] > 5000]
+furnished = cleaned_df[cleaned_df["Furnishing"] == "Furnished"]
+```
+
+### Example 3: Analyzing Localities
+
+```python
+from clean import clean_jiji_csv
+
+df = clean_jiji_csv()
+
+# Count by locality
+locality_counts = df["locality"].value_counts()
+print(locality_counts.head(10))
+
+# Average price by locality
+avg_prices = df.groupby("locality")["price"].mean().sort_values(ascending=False)
+print(avg_prices.head(10))
+```
+
+### Example 4: Amenity Analysis
+
+```python
+from clean import clean_jiji_csv
+
+df = clean_jiji_csv()
+
+# Listings with Wi-Fi
+wifi_listings = df[df["Wi-Fi"] == 1]
+
+# Count amenity prevalence
+amenity_cols = [
+    "Wi-Fi", "24-hour Electricity", "Hot Water",
+    "Air Conditioning", "Parking", "Security"
+]
+for col in amenity_cols:
+    if col in df.columns:
+        pct = (df[col] == 1).sum() / len(df) * 100
+        print(f"{col}: {pct:.1f}%")
+```

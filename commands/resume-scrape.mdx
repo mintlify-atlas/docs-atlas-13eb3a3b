@@ -1,0 +1,209 @@
+---
+title: 'Resume Scrape'
+description: 'Resume interrupted listing scrapes by processing only missing URLs'
+---
+
+The resume scrape mode automatically identifies and scrapes only the listings that haven't been collected yet, allowing you to recover from interrupted scrapes without re-processing completed URLs.
+
+## Overview
+
+Resume mode compares your URL collection CSV against your existing data CSV and creates a temporary queue containing only unscraped URLs. This enables efficient recovery from:
+
+- Network interruptions
+- Rate limiting
+- System crashes
+- Manual cancellations
+
+## How It Works
+
+### 1. Queue File Creation
+
+The resume workflow:
+
+1. Reads all URLs from the URL collection CSV (e.g., `jiji_urls.csv`)
+2. Reads all scraped URLs from the data CSV (e.g., `jiji_data.csv`) using the `url` column
+3. Calculates the difference (URLs in collection but not in data)
+4. Creates a temporary queue CSV with only pending URLs
+
+**Queue file locations:**
+- Jiji: `outputs/urls/jiji_resume_queue.csv`
+- Meqasa: `outputs/urls/meqasa_resume_queue.csv`
+
+### 2. Progress Tracking
+
+Before scraping begins, you'll see a summary table:
+
+| Source | URL Pool | Already Scraped | Pending |
+|--------|----------|-----------------|--------|
+| Jiji   | 500      | 350             | 150    |
+| Meqasa | 300      | 300             | 0      |
+
+- **URL Pool:** Total unique URLs in the URL CSV
+- **Already Scraped:** URLs found in the data CSV
+- **Pending:** URLs that will be scraped in this run
+
+### 3. Automatic Cleanup
+
+After the scrape completes (successfully or with errors), temporary queue files are automatically deleted. This ensures:
+
+- No stale queue files accumulate
+- Fresh queue calculation on next resume
+- Clean project state
+
+<Note>
+If all URLs have been scraped (pending = 0), no spider runs and the queue file is not created.
+</Note>
+
+## Usage
+
+### Interactive Mode (Recommended)
+
+Run `main.py` and select the resume option:
+
+```bash
+python main.py
+```
+
+1. Choose **"Resume listing scrape (missing URLs only)"**
+2. Select source (Jiji, Meqasa, or both)
+3. Confirm whether to use default CSV paths
+4. Review the resume queue summary
+5. Scraping begins automatically for pending URLs
+
+### Custom CSV Paths
+
+If your URL or data CSVs are in non-default locations:
+
+1. Select **"No"** when asked about default paths
+2. Provide custom paths when prompted:
+   - URL CSV path (source of all listing URLs)
+   - Data CSV path (already scraped listings)
+
+The queue will be built from your specified files.
+
+### Direct Spider Execution
+
+Resume mode is primarily designed for use through `main.py`, but you can manually create queue files and run:
+
+```bash
+scrapy crawl jiji_listings -a csv_path=outputs/urls/jiji_resume_queue.csv
+scrapy crawl meqasa_listings -a csv_path=outputs/urls/meqasa_resume_queue.csv
+```
+
+<Note>
+When running spiders directly, you're responsible for creating and cleaning up queue files.
+</Note>
+
+## Resume Queue Logic
+
+The queue building process (main.py:152-206):
+
+```python
+def build_resume_queue(
+    urls_csv: Path,      # Source URLs
+    data_csv: Path,      # Already scraped data
+    queue_csv: Path      # Output queue file
+) -> tuple[int, int, int]:
+    # Returns: (total_urls, already_scraped, pending)
+```
+
+**Key behaviors:**
+
+1. **Missing URL CSV:** Queue is not created, returns `(0, 0, 0)`
+2. **Empty URL CSV:** Queue is not created, returns `(0, 0, 0)`
+3. **Missing data CSV:** All URLs from URL CSV are queued
+4. **All scraped:** Existing queue file (if any) is deleted, returns `(total, total, 0)`
+5. **Partial completion:** Queue file created with pending URLs
+
+**Deduplication:**
+- URL CSV is deduplicated before comparison
+- Only first occurrence of each URL is kept
+- Data CSV is read into a set for efficient lookup
+
+## Jiji Auto-Cleaning
+
+When resuming Jiji scrapes, if any new listings are scraped, the automatic cleaning process runs after completion:
+
+**Input:** `outputs/data/jiji_data.csv` (all Jiji listings)
+**Output:** `outputs/data/raw.csv` (cleaned dataset)
+
+The cleaning:
+- Processes the entire `jiji_data.csv` (not just newly scraped items)
+- Overwrites the previous `raw.csv`
+- Runs only if `jiji_data.csv` exists
+
+## Examples
+
+### Basic Resume
+
+After an interrupted Jiji scrape:
+
+```bash
+python main.py
+# Select: Resume listing scrape
+# Select: Jiji only
+# Use default paths: Yes
+```
+
+Output:
+```
+Resume Queue Summary
+┏━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━┓
+┃ Source┃ URL Pool ┃ Already Scraped ┃ Pending ┃
+┡━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
+│ Jiji  │ 1,000    │ 673             │ 327     │
+└───────┴──────────┴─────────────────┴─────────┘
+```
+
+### Resume Both Sources
+
+```bash
+python main.py
+# Select: Resume listing scrape
+# Select: Both Jiji and Meqasa
+# Use default paths: Yes
+```
+
+Both sources are processed in parallel. Queue files are created for each source with pending URLs.
+
+### Resume with Custom Paths
+
+```bash
+python main.py
+# Select: Resume listing scrape
+# Select: Jiji only
+# Use default paths: No
+# Jiji URL CSV: custom/jiji_urls_backup.csv
+# Jiji data CSV: custom/jiji_data_backup.csv
+```
+
+The queue is built from your custom files, but the output data will still append to the default `outputs/data/jiji_data.csv`.
+
+<Note>
+Resume mode only affects which URLs are queued for scraping. Data is always written to the spider's configured output CSV path.
+</Note>
+
+## Best Practices
+
+1. **Always use resume mode** when re-running listing scrapes to avoid duplicate work
+2. **Review the summary table** before confirming to verify pending count
+3. **Don't manually edit queue files** - they're regenerated on each resume
+4. **Keep URL and data CSVs in sync** - don't delete the data CSV between runs
+5. **Use default paths** unless you have a specific reason to customize
+
+## Troubleshooting
+
+**Queue shows 0 pending but you know listings are missing:**
+- Check that URLs in data CSV exactly match URLs in URL CSV
+- Verify the `url` column exists in both files
+- Ensure no extra whitespace in URL values
+
+**Queue file not deleted after scrape:**
+- Normal if scrape was interrupted (Ctrl+C)
+- Safe to manually delete `*_resume_queue.csv` files
+- Will be regenerated on next resume
+
+**"Already Scraped" count seems wrong:**
+- Data CSV may contain URLs not in URL CSV (manually added listings)
+- Only URLs present in both files affect "Pending" count
+- "URL Pool" is the source of truth for total collection size

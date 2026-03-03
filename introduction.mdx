@@ -1,0 +1,105 @@
+---
+title: Introduction
+description: A powerful CLI tool for scraping rental property listings in Greater Accra, Ghana
+---
+
+# Welcome to ScrapeAccraProperties
+
+ScrapeAccraProperties is a Scrapy + Playwright project for collecting rental listings in Greater Accra from Jiji Ghana and Meqasa. It features an interactive CLI with rich progress UI, JavaScript-rendered scraping, and intelligent resume capabilities.
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Get started with Python 3.12+, install dependencies, and set up Playwright browser
+  </Card>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Run your first scrape in minutes with the interactive CLI
+  </Card>
+  <Card title="Workflow" icon="diagram-project" href="/concepts/workflow">
+    Learn the two-phase workflow: collect URLs, then scrape listings
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/settings">
+    Configure spiders, customize settings, and optimize performance
+  </Card>
+</CardGroup>
+
+## Key Features
+
+<AccordionGroup>
+  <Accordion title="JavaScript-Rendered Scraping" icon="js">
+    Uses `scrapy-playwright` with Chromium to handle dynamically loaded content from modern property listing sites. Asset blocking is enabled for images, media, fonts, and stylesheets to improve performance.
+  </Accordion>
+
+  <Accordion title="Interactive CLI Runner" icon="terminal">
+    Rich progress UI with per-spider summaries guides you through the entire workflow. Choose platforms, configure pagination, and monitor scraping progress all from an intuitive menu system.
+  </Accordion>
+
+  <Accordion title="Two-Phase Workflow" icon="list-check">
+    **Phase 1**: Collect listing URLs from search/result pages  
+    **Phase 2**: Visit each listing URL and extract structured data  
+    
+    This separation allows you to validate URLs before scraping and enables efficient resume operations.
+  </Accordion>
+
+  <Accordion title="Incremental CSV Output" icon="database">
+    Listing data is written to CSV files incrementally as items are scraped. URL deduplication ensures no duplicate entries, and all outputs are organized under `outputs/` directory.
+  </Accordion>
+
+  <Accordion title="Resume Mode" icon="rotate-right">
+    Automatically compares URL CSVs to data CSVs and queues only missing URLs. Resume from where you left off without re-scraping existing listings.
+  </Accordion>
+
+  <Accordion title="Data Cleaning Pipeline" icon="filter">
+    Jiji listings are automatically cleaned after scraping using `clean.py`, producing a standardized dataset at `outputs/data/raw.csv`.
+  </Accordion>
+</AccordionGroup>
+
+## Supported Platforms
+
+<CardGroup cols={2}>
+  <Card title="Jiji Ghana" icon="house">
+    Scrapes rental listings with detailed property attributes including:
+    - Title, location, and description
+    - House type, bedrooms, and bathrooms
+    - Price and amenities
+    - Custom property attributes
+  </Card>
+
+  <Card title="Meqasa" icon="building">
+    Extracts comprehensive listing information:
+    - Title, price, and rate type
+    - Full description
+    - Dynamic property details from listing tables
+    - Flexible schema adapts to varying attributes
+  </Card>
+</CardGroup>
+
+## Output Structure
+
+All scraping outputs are automatically organized:
+
+```text
+outputs/
+├── urls/
+│   ├── jiji_urls.csv
+│   ├── meqasa_urls.csv
+│   └── *_resume_queue.csv (temporary)
+└── data/
+    ├── jiji_data.csv
+    ├── meqasa_data.csv
+    └── raw.csv (cleaned Jiji data)
+```
+
+<Note>
+  **Responsible Use**: Review and respect target site Terms of Service and `robots.txt`. Keep request volume and crawl frequency reasonable. Use scraped data in line with applicable laws and privacy obligations.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Install Now" icon="circle-1" href="/installation">
+    Set up Python dependencies and Playwright browser
+  </Card>
+  <Card title="Run Your First Scrape" icon="circle-2" href="/quickstart">
+    Follow the quickstart tutorial to collect your first listings
+  </Card>
+</CardGroup>

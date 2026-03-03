@@ -1,80 +1,263 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick Start
+description: Scrape your first Accra rental listings in minutes
 ---
 
-## Get started in three steps
+# Quick Start
 
-Get your documentation site running locally and make your first customization.
-
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+This guide will walk you through scraping your first rental property listings from Jiji Ghana or Meqasa using the interactive CLI.
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  Make sure you've completed the [installation](/installation) before proceeding.
 </Note>
+
+## Two-Phase Workflow
+
+ScrapeAccraProperties uses a two-phase approach:
+
+1. **Collect listing URLs** from search/result pages
+2. **Scrape listing details** by visiting each URL
+
+This separation allows you to validate URLs before scraping and enables efficient resume operations.
+
+## Your First Scrape
+
+<Steps>
+  <Step title="Launch the interactive CLI">
+    Start the interactive runner:
+
+    <CodeGroup>
+      ```bash Standard Python
+      python main.py
+      ```
+
+      ```bash With uv
+      uv run python main.py
+      ```
+    </CodeGroup>
+
+    You'll see the main menu:
+
+    ```text
+    ╭─────────────────────── main.py ────────────────────────╮
+    │ Accra Property Scraper                                 │
+    │ - Interactive multi-spider runner                      │
+    │ - Listing resume mode queues only missing URLs         │
+    │ - CSV writes happen item-by-item during crawl          │
+    │ - Jiji listings are cleaned to outputs/data/raw.csv    │
+    ╰────────────────────────────────────────────────────────╯
+
+    Choose action
+      1. Collect listing URLs
+      2. Scrape listing details
+      3. Resume listing scrape (missing URLs only)
+      4. Exit
+    Enter choice [1]:
+    ```
+  </Step>
+
+  <Step title="Collect listing URLs">
+    Select option `1` to collect listing URLs.
+
+    **Choose your source:**
+    ```text
+    Select source
+      1. Jiji only
+      2. Meqasa only
+      3. Both Jiji and Meqasa
+    Enter choice [3]:
+    ```
+
+    For this quickstart, let's choose `1` (Jiji only).
+
+    **Configure pagination:**
+    ```text
+    Jiji start page [1]: 1
+
+    Jiji URL mode
+      1. Auto detect total pages
+      2. Fixed number of pages
+      3. Convert expected listings to page count
+    Enter choice [1]: 2
+
+    Jiji max pages [5]: 2
+    ```
+
+    This will scrape the first 2 pages of Jiji rental listings.
+
+    <Tip>
+      Start with a small number of pages (2-5) for your first run to test the workflow.
+    </Tip>
+
+    The spider will start crawling and display progress:
+
+    ```text
+    2024-03-03 10:15:32 [scrapy.core.engine] INFO: Spider opened
+    2024-03-03 10:15:33 [scrapy.core.engine] INFO: Crawled 1 pages (at 1 pages/min)
+    ...
+    ```
+
+    URLs are saved to: `outputs/urls/jiji_urls.csv`
+  </Step>
+
+  <Step title="Scrape listing details">
+    Run the CLI again and select option `2` to scrape listing details:
+
+    ```bash
+    python main.py
+    ```
+
+    Select `2. Scrape listing details`
+
+    **Choose your source:**
+    ```text
+    Select source
+      1. Jiji only
+      2. Meqasa only
+      3. Both Jiji and Meqasa
+    Enter choice [3]: 1
+    ```
+
+    **Specify the URL CSV path:**
+    ```text
+    Jiji URL CSV [outputs/urls/jiji_urls.csv]:
+    ```
+
+    Press Enter to use the default path. The spider will:
+    - Read URLs from `outputs/urls/jiji_urls.csv`
+    - Visit each listing page
+    - Extract structured data (title, location, price, bedrooms, amenities, etc.)
+    - Write incrementally to `outputs/data/jiji_data.csv`
+
+    After scraping completes, Jiji listings are automatically cleaned:
+
+    ```text
+    [green]Jiji cleaned CSV saved:[/] outputs/data/raw.csv (143 rows)
+    [bold green]Done.[/]
+    ```
+
+    <Note>
+      The cleaning step (producing `raw.csv`) is currently Jiji-only.
+    </Note>
+  </Step>
+
+  <Step title="Explore your data">
+    Check the `outputs/` directory for your scraped data:
+
+    ```bash
+    ls -R outputs/
+    ```
+
+    ```text
+    outputs/
+    ├── urls/
+    │   └── jiji_urls.csv
+    └── data/
+        ├── jiji_data.csv
+        └── raw.csv
+    ```
+
+    **View the data:**
+
+    ```bash
+    head -n 5 outputs/data/raw.csv
+    ```
+
+    You'll see rental listings with fields like:
+    - `url` - Listing URL
+    - `title` - Property title
+    - `location` - Area/neighborhood
+    - `house_type` - Apartment, house, etc.
+    - `bedrooms` - Number of bedrooms
+    - `bathrooms` - Number of bathrooms
+    - `price` - Rental price
+    - `amenities` - List of amenities
+    - `description` - Full listing description
+    - `fetch_date` - When the data was scraped
+  </Step>
+</Steps>
+
+## Resume Scraping
+
+If your scrape is interrupted, you can resume without re-scraping existing listings:
+
+<Steps>
+  <Step title="Select resume mode">
+    Run the CLI and choose option `3. Resume listing scrape (missing URLs only)`
+
+    ```bash
+    python main.py
+    ```
+  </Step>
+
+  <Step title="Review the queue summary">
+    The CLI will show which URLs are already scraped vs. pending:
+
+    ```text
+    Use default URL/data CSV paths for resume mode? [Y/n]: y
+
+    ┌─────── Resume Queue Summary ────────┐
+    │ Source  │ URL Pool │ Already Scraped │ Pending │
+    ├─────────┼──────────┼─────────────────┼─────────┤
+    │ Jiji    │      156 │             143 │      13 │
+    └─────────┴──────────┴─────────────────┴─────────┘
+    ```
+
+    Only the 13 pending URLs will be scraped.
+  </Step>
+
+  <Step title="Scrape completes">
+    The spider queues only missing URLs and completes the scrape. Temporary queue files are automatically cleaned up.
+  </Step>
+</Steps>
+
+## Running Spiders Directly
+
+You can bypass the interactive CLI and run spiders directly with `scrapy`:
+
+<CodeGroup>
+  ```bash Collect Jiji URLs (auto-detect pages)
+  scrapy crawl jiji_urls -a start_page=1
+  ```
+
+  ```bash Collect Jiji URLs (fixed pages)
+  scrapy crawl jiji_urls -a start_page=1 -a max_pages=5
+  ```
+
+  ```bash Collect Jiji URLs (by listing count)
+  scrapy crawl jiji_urls -a start_page=1 -a total_listing=200
+  ```
+
+  ```bash Collect Meqasa URLs
+  scrapy crawl meqasa_urls -a start_page=1 -a total_pages=5
+  ```
+
+  ```bash Scrape Jiji listings
+  scrapy crawl jiji_listings -a csv_path=outputs/urls/jiji_urls.csv
+  ```
+
+  ```bash Scrape Meqasa listings
+  scrapy crawl meqasa_listings -a csv_path=outputs/urls/meqasa_urls.csv
+  ```
+</CodeGroup>
+
+<Warning>
+  When running spiders directly, you'll need to manually run `clean.py` for Jiji data cleaning. The interactive CLI handles this automatically.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Understand the Workflow" icon="diagram-project" href="/concepts/workflow">
+    Learn about the two-phase workflow, resume mode, and data cleaning pipeline
+  </Card>
+  <Card title="Configure Settings" icon="gear" href="/configuration/settings">
+    Customize spider behavior, pagination, concurrency, and Playwright options
+  </Card>
+  <Card title="Output Schema" icon="table" href="/concepts/data-schema">
+    Understand the structure of URL CSVs and listing data CSVs
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/reference/troubleshooting">
+    Fix common issues like browser failures, empty fields, and resume errors
+  </Card>
+</CardGroup>

@@ -1,0 +1,298 @@
+---
+title: "Scraping Workflow"
+description: "Understanding the two-phase workflow for collecting rental property listings"
+---
+
+ScrapeAccraProperties uses a **two-phase workflow** to efficiently collect and extract rental property data from Jiji Ghana and Meqasa.
+
+## Overview
+
+The scraper separates URL discovery from data extraction to enable:
+
+- Incremental scraping with resume capability
+- URL deduplication across multiple runs
+- Progress tracking and failure recovery
+- Efficient resource usage
+
+<Steps>
+  <Step title="Phase 1: URL Collection">
+    Spider crawls search result pages and extracts listing URLs, saving them to CSV files in `outputs/urls/`.
+  </Step>
+  <Step title="Phase 2: Listing Extraction">
+    Spider reads the URL CSV files and visits each listing to extract structured property data, saving to `outputs/data/`.
+  </Step>
+</Steps>
+
+## Phase 1: URL Collection
+
+### How It Works
+
+URL spiders (`jiji_urls` and `meqasa_urls`) navigate through paginated search results to collect all available listing URLs.
+
+**Jiji URL Collection:**
+
+```bash
+scrapy crawl jiji_urls -a start_page=1 -a max_pages=5
+scrapy crawl jiji_urls -a start_page=1 -a total_listing=200
+```
+
+**Meqasa URL Collection:**
+
+```bash
+scrapy crawl meqasa_urls -a start_page=1 -a total_pages=5
+```
+
+### Auto-Detection Mode
+
+When neither `max_pages` nor `total_pages` is specified, spiders automatically detect the total number of results:
+
+<CodeGroup>
+```python Jiji Auto-Detection
+# From jiji_urls.py:64-84
+if response.meta.get("is_detector") and not self._detected:
+    self._detected = True
+    if count_text := response.css(
+        'div.b-breadcrumb-link--current-url span[property="name"]::text'
+    ).get():
+        if match := re.search(r"([\d,]+)\\s+results", count_text):
+            total = int(match.group(1).replace(",", ""))
+            self.max_pages = math.ceil(total / LISTINGS_PER_PAGE)
+            self.logger.info(
+                f"🔍 Jiji: {total:,} results (~{self.max_pages} pages)"
+            )
+```
+
+```python Meqasa Auto-Detection
+# From meqasa_urls.py:61-69
+if response.meta.get("is_detector") and not self._detected:
+    self._detected = True
+    if raw_count := response.css("#headfiltercount::text").get():
+        total = int(re.sub(r"[^\d]", "", raw_count))
+        self.total_pages = math.ceil(total / LISTINGS_PER_PAGE)
+        self.logger.info(
+            f"Meqasa: {total:,} listings (~{self.total_pages} pages)"
+        )
+```
+</CodeGroup>
+
+### Output Files
+
+| Spider | Output Path | Schema |
+|--------|-------------|--------|
+| `jiji_urls` | `outputs/urls/jiji_urls.csv` | url, page, fetch_date |
+| `meqasa_urls` | `outputs/urls/meqasa_urls.csv` | url, page, fetch_date |
+
+## Phase 2: Listing Extraction
+
+### How It Works
+
+Listing spiders read URLs from the Phase 1 CSV files and visit each listing page to extract detailed property information.
+
+**Jiji Listing Scrape:**
+
+```bash
+scrapy crawl jiji_listings -a csv_path=outputs/urls/jiji_urls.csv
+```
+
+**Meqasa Listing Scrape:**
+
+```bash
+scrapy crawl meqasa_listings -a csv_path=outputs/urls/meqasa_urls.csv
+```
+
+<Note>
+The `csv_path` parameter is relative to the project root. You can also provide an absolute path.
+</Note>
+
+### Output Files
+
+| Spider | Output Path | Description |
+|--------|-------------|-------------|
+| `jiji_listings` | `outputs/data/jiji_data.csv` | Raw Jiji listing data |
+| `meqasa_listings` | `outputs/data/meqasa_data.csv` | Raw Meqasa listing data |
+| Post-processing | `outputs/data/raw.csv` | Cleaned Jiji data (auto-generated) |
+
+### Automatic Cleaning
+
+After a Jiji listing scrape completes, the `clean.py` script runs automatically to normalize and clean the data:
+
+```python
+# From main.py:364-365
+if jiji_job_scheduled:
+    run_jiji_cleaning()
+```
+
+The cleaned dataset is written to `outputs/data/raw.csv` with standardized fields for downstream analysis.
+
+<Warning>
+Cleaning is currently **Jiji-only**. Meqasa data is not automatically cleaned.
+</Warning>
+
+## Resume Mode
+
+Resume mode enables you to scrape only missing listings by comparing URL CSVs against data CSVs.
+
+### How Resume Works
+
+<Steps>
+  <Step title="Compare URL sets">
+    Resume mode reads URLs from both the URL CSV and the data CSV.
+  </Step>
+  <Step title="Identify missing URLs">
+    It calculates which URLs from the URL CSV haven't been scraped yet.
+  </Step>
+  <Step title="Create temporary queue">
+    Missing URLs are written to a temporary resume queue CSV file.
+  </Step>
+  <Step title="Run listing spider">
+    The listing spider reads the queue file instead of the full URL CSV.
+  </Step>
+  <Step title="Cleanup">
+    The temporary queue file is automatically deleted after the run completes.
+  </Step>
+</Steps>
+
+### Resume Queue Generation
+
+```python
+# From main.py:152-206
+def build_resume_queue(
+    urls_csv: Path, data_csv: Path, queue_csv: Path
+) -> tuple[int, int, int]:
+    # Load scraped URLs
+    scraped_urls = read_url_set(data_csv, "url")
+    
+    # Deduplicate and filter pending URLs
+    for row in rows:
+        url = (row.get("url") or "").strip()
+        if not url or url in source_seen:
+            continue
+        source_seen.add(url)
+        if url in scraped_urls:
+            continue
+        pending_rows.append(row)
+    
+    # Write queue file with pending URLs only
+    with open(queue_csv, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, ...)
+        writer.writeheader()
+        writer.writerows(pending_rows)
+```
+
+### Resume Queue Files
+
+| Site | Queue File | Lifecycle |
+|------|-----------|----------|
+| Jiji | `outputs/urls/jiji_resume_queue.csv` | Temporary (auto-deleted) |
+| Meqasa | `outputs/urls/meqasa_resume_queue.csv` | Temporary (auto-deleted) |
+
+### Running Resume Mode
+
+Using the interactive CLI:
+
+```bash
+python main.py
+# Select: "Resume listing scrape (missing URLs only)"
+```
+
+The CLI displays a summary before starting:
+
+```
+┌────────────────── Resume Queue Summary ──────────────────┐
+│ Source  │ URL Pool │ Already Scraped │      Pending │
+├─────────┼──────────┼─────────────────┼──────────────┤
+│ Jiji    │    1,250 │           1,180 │          70 │
+│ Meqasa  │      876 │             876 │           0 │
+└─────────┴──────────┴─────────────────┴──────────────┘
+```
+
+<Tip>
+Resume mode is ideal for:
+- Recovering from interrupted scrapes
+- Adding newly discovered listings
+- Re-scraping after fixing extraction bugs
+</Tip>
+
+## Workflow Orchestration
+
+The `main.py` file provides an interactive CLI that orchestrates the entire workflow:
+
+```python
+# From main.py:382-402
+def main() -> None:
+    print_header()
+    action = ask_choice(
+        "Choose action",
+        [
+            ("urls", "Collect listing URLs"),
+            ("listings", "Scrape listing details"),
+            ("resume", "Resume listing scrape (missing URLs only)"),
+            ("exit", "Exit"),
+        ],
+        default="urls",
+    )
+
+    if action == "urls":
+        run_url_collection()
+    elif action == "listings":
+        run_listing_scrape(resume=False)
+    elif action == "resume":
+        run_listing_scrape(resume=True)
+```
+
+### Site Selection
+
+For each action, you can choose which site(s) to scrape:
+
+- **Jiji only** — Scrape only Jiji Ghana listings
+- **Meqasa only** — Scrape only Meqasa listings  
+- **Both Jiji and Meqasa** — Run spiders for both sites in parallel
+
+```python
+# From main.py:125-137
+def choose_sites() -> list[SiteConfig]:
+    choice = ask_choice(
+        "Select source",
+        [
+            ("jiji", "Jiji only"),
+            ("meqasa", "Meqasa only"),
+            ("both", "Both Jiji and Meqasa"),
+        ],
+        default="both",
+    )
+    if choice == "both":
+        return [SITE_CONFIGS["jiji"], SITE_CONFIGS["meqasa"]]
+    return [SITE_CONFIGS[choice]]
+```
+
+## Output Directory Structure
+
+All outputs are organized under the `outputs/` directory:
+
+```
+outputs/
+├── urls/
+│   ├── jiji_urls.csv              # Phase 1: Jiji URLs
+│   ├── meqasa_urls.csv            # Phase 1: Meqasa URLs
+│   ├── jiji_resume_queue.csv      # Temporary (when using resume mode)
+│   └── meqasa_resume_queue.csv    # Temporary (when using resume mode)
+└── data/
+    ├── jiji_data.csv              # Phase 2: Raw Jiji listings
+    ├── meqasa_data.csv            # Phase 2: Raw Meqasa listings
+    └── raw.csv                    # Cleaned Jiji data (post-processing)
+```
+
+<Info>
+Directories are created automatically when spiders first run. No manual setup is required.
+</Info>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Spider Architecture" icon="spider" href="/concepts/spiders">
+    Learn about the PropertyBaseSpider class and how spiders work
+  </Card>
+  <Card title="Data Schema" icon="table" href="/concepts/data-schema">
+    Explore the CSV schemas and field definitions for each site
+  </Card>
+</CardGroup>

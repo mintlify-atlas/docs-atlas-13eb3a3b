@@ -1,0 +1,505 @@
+---
+title: "Spider Architecture"
+description: "Understanding the PropertyBaseSpider class and spider implementations"
+---
+
+ScrapeAccraProperties uses a shared base class to provide consistent CSV writing, progress tracking, and URL deduplication across all spiders.
+
+## PropertyBaseSpider
+
+All spiders inherit from `PropertyBaseSpider`, which extends Scrapy's base `Spider` class with property scraping functionality.
+
+### Key Features
+
+<CardGroup cols={2}>
+  <Card title="Incremental CSV Writes" icon="file-csv">
+    Write items to CSV one-by-one as they're scraped, with automatic deduplication
+  </Card>
+  <Card title="Progress Tracking" icon="chart-line">
+    Real-time UI with scraped count, speed, errors, and page progress
+  </Card>
+  <Card title="URL Deduplication" icon="filter">
+    Automatic detection and skipping of duplicate URLs across runs
+  </Card>
+  <Card title="Resume Support" icon="rotate">
+    Track existing URLs on startup to enable resume mode
+  </Card>
+</CardGroup>
+
+### Class Definition
+
+```python
+# From base_spider.py:55-69
+class PropertyBaseSpider(scrapy.Spider):
+    OUTPUT_CSV: Path
+    URL_FIELD: str = "url"
+    OUTPUT_FIELDS: tuple[str, ...] | None = None
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.start_time_ts = time.time()
+        self.scraped_count = 0
+        self.failures = 0
+        self._seen_urls = set()
+        self._task_id = None
+        self._csv_fieldnames = (
+            list(self.OUTPUT_FIELDS) if self.OUTPUT_FIELDS is not None else []
+        )
+```
+
+### Required Attributes
+
+Each spider must define:
+
+<ParamField path="OUTPUT_CSV" type="Path" required>
+  Path to the output CSV file where scraped data will be written.
+</ParamField>
+
+<ParamField path="OUTPUT_FIELDS" type="tuple[str, ...]" required>
+  Ordered list of field names for the CSV. If `None`, fields are dynamically discovered from the first item.
+</ParamField>
+
+<ParamField path="URL_FIELD" type="str" default="url">
+  Name of the field containing the unique URL identifier for deduplication.
+</ParamField>
+
+## URL Deduplication
+
+The base spider tracks URLs in two ways:
+
+1. **On spider startup** — Read existing URLs from the output CSV
+2. **During scraping** — Track newly scraped URLs in memory
+
+### Startup: Loading Existing URLs
+
+```python
+# From base_spider.py:78-93
+def _opened(self, spider):
+    if hasattr(self, "OUTPUT_CSV") and self.OUTPUT_CSV.exists():
+        try:
+            with open(self.OUTPUT_CSV, newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                if reader.fieldnames:
+                    self._csv_fieldnames = [k for k in reader.fieldnames if k]
+                for row in reader:
+                    try:
+                        val = row.get(self.URL_FIELD, "").strip()
+                        if val:
+                            self._seen_urls.add(val)
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+```
+
+This enables the spider to skip URLs that were already scraped in previous runs.
+
+### During Scraping: In-Memory Deduplication
+
+```python
+# From base_spider.py:147-158
+def save_item(self, item: dict):
+    item = self._normalize_item(item)
+    url_val = str(item.get(self.URL_FIELD, "")).strip()
+
+    with tracker.csv_lock:
+        if url_val and url_val in self._seen_urls:
+            return  # Skip duplicate
+        if url_val:
+            self._seen_urls.add(url_val)
+        # ... write to CSV
+```
+
+<Note>
+Deduplication happens at the **URL level**, not the item level. If two items have the same URL, only the first one is saved.
+</Note>
+
+## Incremental CSV Writing
+
+Unlike Scrapy's default feed exporters, `PropertyBaseSpider` writes items to CSV **immediately** after scraping:
+
+```python
+# From base_spider.py:160-176
+self.OUTPUT_CSV.parent.mkdir(parents=True, exist_ok=True)
+file_exists = (
+    self.OUTPUT_CSV.exists() and self.OUTPUT_CSV.stat().st_size > 0
+)
+fieldnames = self._get_output_fieldnames(item)
+with open(self.OUTPUT_CSV, "a", newline="", encoding="utf-8") as f:
+    writer = csv.DictWriter(
+        f,
+        fieldnames=fieldnames,
+        extrasaction="ignore",
+        quoting=csv.QUOTE_MINIMAL,
+        lineterminator="\n",
+    )
+    if not file_exists:
+        writer.writeheader()
+    writer.writerow(item)
+```
+
+### Benefits
+
+<AccordionGroup>
+  <Accordion title="Immediate persistence">
+    If the spider crashes, all items scraped before the crash are already saved to CSV.
+  </Accordion>
+  <Accordion title="Resume-friendly">
+    The CSV can be read during startup to determine which URLs have already been scraped.
+  </Accordion>
+  <Accordion title="Memory efficient">
+    Items are written and released immediately, not accumulated in memory.
+  </Accordion>
+</AccordionGroup>
+
+### Data Serialization
+
+Complex Python objects are serialized to JSON before writing:
+
+```python
+# From base_spider.py:106-116
+@staticmethod
+def _serialize_for_csv(value: Any) -> Any:
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    if isinstance(value, (list, tuple, set)):
+        return json.dumps(list(value), ensure_ascii=False)
+    if isinstance(value, str):
+        return " ".join(value.split())  # Normalize whitespace
+    return value
+```
+
+## Progress Tracking
+
+The `SpiderProgressTracker` class provides a shared Rich progress UI for all running spiders.
+
+### Progress Display
+
+Each spider gets a live progress bar showing:
+
+- **Scraped** — Total items scraped
+- **Speed** — Items per minute
+- **Errors** — Failed requests
+- **Page** — Current page (for URL spiders) or "scraped/total" (for listing spiders)
+- **Elapsed** — Time since spider started
+
+```python
+# From base_spider.py:20-37
+class SpiderProgressTracker:
+    def __init__(self):
+        self.progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[cyan bold]{task.description:<22}"),
+            TextColumn("[green]{task.fields[scraped]:>6,} scraped"),
+            TextColumn("[yellow]{task.fields[speed]:>5.0f}/min"),
+            TextColumn("[red]{task.fields[errors]:>2} err"),
+            TextColumn("[dim]{task.fields[page]:<10}"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=False,
+            refresh_per_second=10,
+        )
+```
+
+### Updating Progress
+
+Spiders call `update_ui()` to refresh the progress display:
+
+```python
+# From base_spider.py:177-194
+def update_ui(self, current_page=None, total_pages=None):
+    if self._task_id is None:
+        return
+
+    elapsed = time.time() - self.start_time_ts
+    speed = (self.scraped_count / elapsed) * 60 if elapsed > 0 else 0
+
+    page_text = f"p.{current_page}" if current_page else ""
+    if total_pages:
+        page_text += f"/{total_pages}"
+
+    tracker.progress.update(
+        self._task_id,
+        scraped=self.scraped_count,
+        speed=speed,
+        errors=self.failures,
+        page=page_text,
+    )
+```
+
+### Final Summary
+
+When a spider completes, a summary panel is displayed:
+
+```python
+# From base_spider.py:196-207
+def _print_summary(self):
+    mins, secs = divmod(int(time.time() - self.start_time_ts), 60)
+    t = Table(show_header=False, box=box.SIMPLE, padding=(0, 2))
+    t.add_column(style="dim")
+    t.add_column(style="bold")
+    t.add_row("Spider", f"[cyan]{self.name.upper()}[/]")
+    t.add_row("Scraped", f"[green]{self.scraped_count:,}[/]")
+    t.add_row("Errors", f"[red]{self.failures}[/]")
+    t.add_row("Duration", f"{mins}m {secs}s")
+    console.print(
+        Panel(t, title="[bold] Complete[/]", border_style="green", expand=False)
+    )
+```
+
+## URL Spiders
+
+URL spiders collect listing URLs from search result pages.
+
+### Jiji URL Spider
+
+```python
+# From jiji_urls.py:16-33
+class JijiUrlSpider(PropertyBaseSpider):
+    name = "jiji_urls"
+    OUTPUT_CSV = PROJECT_ROOT / "outputs" / "urls" / "jiji_urls.csv"
+    URL_FIELD = "url"
+    OUTPUT_FIELDS = ("url", "page", "fetch_date")
+
+    def __init__(
+        self, start_page=1, max_pages=None, total_listing=None, *args, **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        self.start_page = int(start_page)
+        self.max_pages = (
+            math.ceil(int(total_listing) / LISTINGS_PER_PAGE)
+            if total_listing
+            else (int(max_pages) if max_pages else None)
+        )
+        self.total_count = self.max_pages
+        self._detected = False
+```
+
+<ParamField path="start_page" type="int" default="1">
+  First page to start scraping from
+</ParamField>
+
+<ParamField path="max_pages" type="int" optional>
+  Fixed number of pages to scrape (if not using auto-detection)
+</ParamField>
+
+<ParamField path="total_listing" type="int" optional>
+  Expected total listings to convert to page count (20 listings per page)
+</ParamField>
+
+### Meqasa URL Spider
+
+```python
+# From meqasa_urls.py:16-27
+class MeqasaUrlSpider(PropertyBaseSpider):
+    name = "meqasa_urls"
+    OUTPUT_CSV = PROJECT_ROOT / "outputs" / "urls" / "meqasa_urls.csv"
+    URL_FIELD = "url"
+    OUTPUT_FIELDS = ("url", "page", "fetch_date")
+
+    def __init__(self, start_page=1, total_pages=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.start_page = int(start_page)
+        self.total_pages = int(total_pages) if total_pages else None
+        self.total_count = self.total_pages
+        self._detected = False
+```
+
+<ParamField path="start_page" type="int" default="1">
+  First page to start scraping from
+</ParamField>
+
+<ParamField path="total_pages" type="int" optional>
+  Fixed number of pages to scrape (if not using auto-detection)
+</ParamField>
+
+### Common Pattern: Dynamic Request Generation
+
+Both URL spiders use the same pattern:
+
+1. If `max_pages` or `total_pages` is provided, generate all requests immediately
+2. Otherwise, make a single request with `is_detector=True` to auto-detect total count
+3. Once detected, generate remaining requests
+
+```python
+# From jiji_urls.py:35-42
+def start_requests(self):
+    if self.max_pages:
+        yield from (
+            self._make_request(p)
+            for p in range(self.start_page, self.start_page + self.max_pages)
+        )
+    else:
+        yield self._make_request(self.start_page, is_detector=True)
+```
+
+## Listing Spiders
+
+Listing spiders read URLs from CSV files and extract detailed property data.
+
+### Jiji Listing Spider
+
+```python
+# From jiji_listing.py:13-37
+class JijiListingSpider(PropertyBaseSpider):
+    name = "jiji_listings"
+    OUTPUT_CSV = PROJECT_ROOT / "outputs" / "data" / "jiji_data.csv"
+    URL_FIELD = "url"
+    OUTPUT_FIELDS = (
+        "url",
+        "fetch_date",
+        "title",
+        "location",
+        "house_type",
+        "bedrooms",
+        "bathrooms",
+        "price",
+        "properties",
+        "amenities",
+        "description",
+    )
+
+    def __init__(self, csv_path="outputs/urls/jiji_urls.csv", *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.csv_path = (
+            Path(csv_path) if Path(csv_path).is_absolute() else PROJECT_ROOT / csv_path
+        )
+        self.urls = self._load_urls()
+        self.total_count = len(self.urls)
+```
+
+<ParamField path="csv_path" type="str" default="outputs/urls/jiji_urls.csv">
+  Path to the URL CSV file (relative to project root or absolute)
+</ParamField>
+
+### URL Loading
+
+Listing spiders load URLs from CSV on initialization:
+
+```python
+# From jiji_listing.py:39-49
+def _load_urls(self):
+    today = datetime.now().strftime("%Y-%m-%d")
+    urls = []
+    if self.csv_path.exists():
+        with open(self.csv_path, "r", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                if url := row.get("url", "").strip():
+                    urls.append(
+                        {"url": url, "fetch_date": row.get("fetch_date") or today}
+                    )
+    return urls
+```
+
+### Meqasa Listing Spider
+
+```python
+# From meqasa_listing.py:12-41
+class MeqasaListingSpider(PropertyBaseSpider):
+    name = "meqasa_listings"
+    OUTPUT_CSV = PROJECT_ROOT / "outputs" / "data" / "meqasa_data.csv"
+    URL_FIELD = "url"
+    OUTPUT_FIELDS = (
+        "url",
+        "Title",
+        "Price",
+        "Rate",
+        "Description",
+        "fetch_date",
+        "Categories",
+        "Lease options",
+        "Bedrooms",
+        "Bathrooms",
+        "Garage",
+        "Furnished",
+        "Amenities",
+        "Address",
+        "Reference",
+        "details",
+    )
+
+    def __init__(self, csv_path="outputs/urls/meqasa_urls.csv", *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.csv_path = (
+            Path(csv_path) if Path(csv_path).is_absolute() else PROJECT_ROOT / csv_path
+        )
+        self.urls = self._load_urls()
+        self.total_count = len(self.urls)
+```
+
+<ParamField path="csv_path" type="str" default="outputs/urls/meqasa_urls.csv">
+  Path to the URL CSV file (relative to project root or absolute)
+</ParamField>
+
+## Error Handling
+
+All spiders use an async error callback for Playwright requests:
+
+```python
+# From base_spider.py:209-213
+async def errback_close_page(self, failure):
+    self.failures += 1
+    if page := failure.request.meta.get("playwright_page"):
+        await page.close()
+```
+
+This ensures that Playwright page objects are properly closed even when requests fail, preventing memory leaks.
+
+## Usage Examples
+
+### Running URL Spiders Directly
+
+<CodeGroup>
+```bash Jiji - Auto-detect
+scrapy crawl jiji_urls -a start_page=1
+```
+
+```bash Jiji - Fixed pages
+scrapy crawl jiji_urls -a start_page=1 -a max_pages=10
+```
+
+```bash Jiji - By listing count
+scrapy crawl jiji_urls -a start_page=1 -a total_listing=500
+```
+
+```bash Meqasa - Auto-detect
+scrapy crawl meqasa_urls -a start_page=1
+```
+
+```bash Meqasa - Fixed pages
+scrapy crawl meqasa_urls -a start_page=1 -a total_pages=20
+```
+</CodeGroup>
+
+### Running Listing Spiders Directly
+
+<CodeGroup>
+```bash Jiji - Default path
+scrapy crawl jiji_listings
+```
+
+```bash Jiji - Custom path
+scrapy crawl jiji_listings -a csv_path=outputs/urls/jiji_resume_queue.csv
+```
+
+```bash Meqasa - Default path
+scrapy crawl meqasa_listings
+```
+
+```bash Meqasa - Custom path
+scrapy crawl meqasa_listings -a csv_path=outputs/urls/meqasa_resume_queue.csv
+```
+</CodeGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Data Schema" icon="table" href="/concepts/data-schema">
+    Explore the CSV schemas and field definitions for each site
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/settings">
+    Learn about Scrapy settings and Playwright configuration
+  </Card>
+</CardGroup>

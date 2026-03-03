@@ -1,0 +1,129 @@
+---
+title: 'Playwright Configuration'
+description: 'Browser automation settings for JavaScript-rendered scraping'
+---
+
+## Overview
+
+ScrapeAccraProperties uses Playwright with Chromium to scrape JavaScript-rendered pages. The configuration prioritizes performance through resource blocking and optimized browser settings.
+
+## Browser Type
+
+```python
+PLAYWRIGHT_BROWSER_TYPE = "chromium"
+```
+
+The scraper uses Chromium as the browser engine for consistent cross-platform behavior.
+
+## Launch Options
+
+```python
+PLAYWRIGHT_LAUNCH_OPTIONS = {
+    "headless": True,
+    "args": [
+        "--disable-gpu",
+        "--disable-dev-shm-usage",
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-extensions",
+        "--blink-settings=imagesEnabled=false",
+    ],
+}
+```
+
+### Launch Arguments
+
+- **headless**: Runs browser without GUI (background mode)
+- **--disable-gpu**: Disables GPU hardware acceleration
+- **--disable-dev-shm-usage**: Prevents shared memory issues in Docker/limited environments
+- **--no-sandbox**: Disables Chrome sandboxing (required in containerized environments)
+- **--disable-setuid-sandbox**: Additional sandbox bypass for compatibility
+- **--disable-extensions**: Prevents Chrome extensions from loading
+- **--blink-settings=imagesEnabled=false**: Disables image loading at the Blink engine level
+
+These settings optimize for server environments and reduce resource consumption.
+
+## Context Settings
+
+```python
+_CTX = {
+    "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "viewport": {"width": 1280, "height": 720},
+    "ignore_https_errors": True,
+    "bypass_csp": True,
+    "java_script_enabled": True,
+    "accept_downloads": False,
+}
+
+PLAYWRIGHT_CONTEXTS = {
+    "jiji_urls": _CTX,
+    "jiji_listings": _CTX,
+    "meqasa_urls": _CTX,
+    "meqasa_listings": _CTX,
+}
+```
+
+### Context Parameters
+
+- **user_agent**: Mimics Chrome 122 on macOS to appear as a regular browser
+- **viewport**: Sets window size to 1280x720 for consistent rendering
+- **ignore_https_errors**: Bypasses SSL certificate validation errors
+- **bypass_csp**: Disables Content Security Policy restrictions
+- **java_script_enabled**: Enables JavaScript execution (required for target sites)
+- **accept_downloads**: Blocks file downloads to prevent unwanted data transfer
+
+### Named Contexts
+
+Four separate contexts are configured for isolation between spiders:
+- `jiji_urls` - Jiji URL collection spider
+- `jiji_listings` - Jiji listing detail spider
+- `meqasa_urls` - Meqasa URL collection spider
+- `meqasa_listings` - Meqasa listing detail spider
+
+## Resource Blocking
+
+```python
+def should_abort_request(req):
+    return req.resource_type in {"image", "media", "font", "stylesheet", "other"}
+
+PLAYWRIGHT_ABORT_REQUEST = should_abort_request
+```
+
+The scraper blocks heavy resource types to dramatically reduce bandwidth and speed up page loads:
+
+- **image**: All images (PNG, JPG, GIF, WebP, etc.)
+- **media**: Video and audio files
+- **font**: Web fonts (WOFF, TTF, etc.)
+- **stylesheet**: CSS files
+- **other**: Miscellaneous resources
+
+Only HTML, JavaScript, and XHR requests are allowed. This can reduce page load times by 70-90%.
+
+## Max Contexts and Pages
+
+```python
+PLAYWRIGHT_MAX_CONTEXTS = 10
+PLAYWRIGHT_MAX_PAGES_PER_CONTEXT = 12
+```
+
+- **PLAYWRIGHT_MAX_CONTEXTS**: Maximum of 10 browser contexts (isolated sessions)
+- **PLAYWRIGHT_MAX_PAGES_PER_CONTEXT**: Up to 12 pages (tabs) per context
+
+This allows up to 120 concurrent page instances (10 contexts × 12 pages), enabling high-throughput parallel scraping.
+
+## Navigation Timeout
+
+```python
+PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 25000
+```
+
+Page navigation times out after 25 seconds (25,000 milliseconds). This prevents hanging on slow-loading pages while allowing enough time for JavaScript-heavy sites to render.
+
+## Platform-Specific Settings
+
+```python
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+```
+
+On Windows, the event loop policy is set to `WindowsSelectorEventLoopPolicy` for compatibility with Playwright's async operations.

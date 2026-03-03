@@ -1,0 +1,113 @@
+---
+title: 'Scrapy Settings'
+description: 'Core Scrapy configuration for ScrapeAccraProperties'
+---
+
+## Overview
+
+The `property_bot/settings.py` file contains all core Scrapy settings and Playwright browser configuration. The scraper is optimized for high-concurrency headless scraping with intelligent throttling and retry mechanisms.
+
+## Key Scrapy Settings
+
+### Robots.txt Compliance
+
+```python
+ROBOTSTXT_OBEY = True
+```
+
+The scraper respects `robots.txt` directives from target websites. This ensures ethical scraping practices.
+
+### Concurrency Settings
+
+```python
+CONCURRENT_REQUESTS = 32
+CONCURRENT_REQUESTS_PER_DOMAIN = 32
+DOWNLOAD_DELAY = 0.5
+DOWNLOAD_TIMEOUT = 35
+```
+
+- **CONCURRENT_REQUESTS**: Maximum of 32 simultaneous requests across all domains
+- **CONCURRENT_REQUESTS_PER_DOMAIN**: Up to 32 concurrent requests per individual domain
+- **DOWNLOAD_DELAY**: 0.5 second delay between consecutive requests to the same domain
+- **DOWNLOAD_TIMEOUT**: 35 second timeout for page downloads
+
+These settings enable high throughput while maintaining reasonable request spacing.
+
+## Autothrottle Configuration
+
+```python
+AUTOTHROTTLE_ENABLED = True
+AUTOTHROTTLE_START_DELAY = 0.5
+AUTOTHROTTLE_MAX_DELAY = 5
+AUTOTHROTTLE_TARGET_CONCURRENCY = 16
+```
+
+Autothrottle automatically adjusts download delays based on server load:
+
+- **AUTOTHROTTLE_ENABLED**: Enables dynamic throttling
+- **AUTOTHROTTLE_START_DELAY**: Initial delay of 0.5 seconds
+- **AUTOTHROTTLE_MAX_DELAY**: Maximum delay caps at 5 seconds
+- **AUTOTHROTTLE_TARGET_CONCURRENCY**: Targets 16 concurrent requests to each domain
+
+The autothrottle algorithm adjusts delays in real-time to maintain optimal throughput without overwhelming servers.
+
+## Request Retry Settings
+
+```python
+RETRY_TIMES = 3
+RETRY_HTTP_CODES = [500, 502, 503, 504, 408, 429, 403]
+```
+
+- **RETRY_TIMES**: Failed requests are retried up to 3 times
+- **RETRY_HTTP_CODES**: Automatically retries on:
+  - `500` - Internal Server Error
+  - `502` - Bad Gateway
+  - `503` - Service Unavailable
+  - `504` - Gateway Timeout
+  - `408` - Request Timeout
+  - `429` - Too Many Requests
+  - `403` - Forbidden (transient blocks)
+
+This ensures robust handling of temporary server issues and rate limiting.
+
+## Download Handlers
+
+```python
+DOWNLOAD_HANDLERS = {
+    "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+    "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+}
+TWISTED_REACTOR = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
+```
+
+All HTTP/HTTPS requests are routed through Playwright for JavaScript rendering. The AsyncIO reactor enables async/await compatibility.
+
+## Logging Configuration
+
+```python
+LOG_ENABLED = False
+LOG_LEVEL = "ERROR"
+TELNETCONSLE_ENABLED = False
+```
+
+Logging is minimized to reduce console noise. Only error-level messages are shown. The Telnet console is disabled for security.
+
+## Output Directories
+
+```python
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
+(PROJECT_ROOT / "outputs" / "urls").mkdir(parents=True, exist_ok=True)
+(PROJECT_ROOT / "outputs" / "data").mkdir(parents=True, exist_ok=True)
+```
+
+Output directories are automatically created at startup:
+- `outputs/urls/` - URL collection CSVs
+- `outputs/data/` - Listing detail CSVs
+
+## Additional Settings
+
+```python
+COOKIES_ENABLED = False
+```
+
+Cookie handling is disabled as the target sites don't require session persistence.

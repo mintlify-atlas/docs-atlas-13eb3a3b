@@ -1,0 +1,340 @@
+---
+title: "Resume Mode"
+description: "Intelligently resume interrupted scrapes by queueing only unscraped URLs"
+---
+
+Resume mode compares your URL collection CSVs against your scraped data CSVs to identify which listings haven't been scraped yet. It creates temporary queue files containing only the missing URLs, so you can continue scraping without duplicating work.
+
+## What Resume Mode Does
+
+Resume mode performs intelligent diffing between two CSV files:
+
+1. **URL CSV** (`outputs/urls/jiji_urls.csv` or `meqasa_urls.csv`): All discovered listing URLs
+2. **Data CSV** (`outputs/data/jiji_data.csv` or `meqasa_data.csv`): Already scraped listings
+
+It generates a **resume queue CSV** containing only URLs that:
+- Exist in the URL CSV
+- Do **not** exist in the data CSV
+
+The comparison uses the `url` column present in both files.
+
+<Note>
+Resume queue files are temporary and are automatically deleted after the scraping run completes.
+</Note>
+
+## How It Works
+
+<Steps>
+  <Step title="Read all URLs from URL CSV">
+    Loads all URLs from the source URL CSV file(s).
+  </Step>
+  
+  <Step title="Read already-scraped URLs from data CSV">
+    Loads the `url` column from the data CSV to identify which listings have already been scraped.
+  </Step>
+  
+  <Step title="Calculate diff">
+    Identifies URLs in the URL CSV that are **not** in the data CSV.
+    
+    ```python
+    pending_urls = url_csv_urls - data_csv_urls
+    ```
+  </Step>
+  
+  <Step title="Generate resume queue CSV">
+    Writes pending URLs to a temporary queue file:
+    - `outputs/urls/jiji_resume_queue.csv`
+    - `outputs/urls/meqasa_resume_queue.csv`
+  </Step>
+  
+  <Step title="Run listing spider on queue">
+    The listing spider reads from the resume queue CSV instead of the full URL CSV.
+  </Step>
+  
+  <Step title="Clean up queue file">
+    After scraping completes (or fails), the resume queue CSV is automatically deleted.
+  </Step>
+</Steps>
+
+## When to Use Resume Mode
+
+Resume mode is ideal for:
+
+- **Interrupted scrapes**: Your scraper crashed or was stopped mid-run
+- **Incremental updates**: You collected new URLs and only want to scrape the new ones
+- **Failed requests**: Some URLs failed to scrape and you want to retry only those
+- **Large datasets**: You're scraping thousands of URLs and want to pause/resume
+
+<Tip>
+Resume mode is **not** necessary if you're starting fresh. Just use regular "Scrape listing details" action.
+</Tip>
+
+## Using Resume Mode
+
+### Via Interactive Mode
+
+Run `python main.py` and select option 3:
+
+```
+Choose action
+  1. Collect listing URLs
+  2. Scrape listing details
+  3. Resume listing scrape (missing URLs only)
+  4. Exit
+Enter choice [1]: 3
+```
+
+<Steps>
+  <Step title="Select sites">
+    Choose Jiji, Meqasa, or both:
+    ```
+    Select source
+      1. Jiji only
+      2. Meqasa only
+      3. Both Jiji and Meqasa
+    Enter choice [3]:
+    ```
+  </Step>
+  
+  <Step title="Choose CSV paths">
+    Use default paths or specify custom ones:
+    ```
+    Use default URL/data CSV paths for resume mode? [Y/n]:
+    ```
+    
+    **If you choose Yes (default)**:
+    - URL CSV: `outputs/urls/jiji_urls.csv` / `outputs/urls/meqasa_urls.csv`
+    - Data CSV: `outputs/data/jiji_data.csv` / `outputs/data/meqasa_data.csv`
+    
+    **If you choose No**:
+    - You'll be prompted for custom paths for each site
+  </Step>
+  
+  <Step title="View resume queue summary">
+    A table shows the queue analysis:
+    ```
+    ┌─ Resume Queue Summary ────────────────────────────┐
+    │ Source  │ URL Pool │ Already Scraped │ Pending   │
+    ├─────────┼──────────┼─────────────────┼───────────┤
+    │ Jiji    │    1,245 │           1,180 │        65 │
+    │ Meqasa  │      892 │             892 │         0 │
+    └───────────────────────────────────────────────────┘
+    ```
+    
+    - **URL Pool**: Total unique URLs in the URL CSV
+    - **Already Scraped**: URLs found in the data CSV
+    - **Pending**: URLs that will be queued for scraping
+  </Step>
+  
+  <Step title="Spider runs on pending URLs only">
+    Only sites with `Pending > 0` are scraped.
+    
+    In the example above, only Jiji would run (65 URLs).
+  </Step>
+</Steps>
+
+### Example Terminal Session
+
+```
+Choose action
+  1. Collect listing URLs
+  2. Scrape listing details
+  3. Resume listing scrape (missing URLs only)
+  4. Exit
+Enter choice [1]: 3
+
+Select source
+  1. Jiji only
+  2. Meqasa only
+  3. Both Jiji and Meqasa
+Enter choice [3]: 3
+
+Use default URL/data CSV paths for resume mode? [Y/n]: y
+
+┌─ Resume Queue Summary ────────────────────────────┐
+│ Source  │ URL Pool │ Already Scraped │ Pending   │
+├─────────┼──────────┼─────────────────┼───────────┤
+│ Jiji    │    1,245 │           1,180 │        65 │
+│ Meqasa  │      892 │             892 │         0 │
+└───────────────────────────────────────────────────┘
+
+[Jiji listing spider runs on 65 URLs...]
+[Jiji cleaning runs...]
+
+Done.
+```
+
+## Resume Queue File Format
+
+Resume queue CSVs have the same format as the original URL CSVs:
+
+```csv outputs/urls/jiji_resume_queue.csv
+url,page,fetch_date
+https://jiji.com.gh/accra-metropolitan/houses-apartments-for-rent/...,5,2026-03-02
+https://jiji.com.gh/accra-metropolitan/houses-apartments-for-rent/...,5,2026-03-02
+https://jiji.com.gh/accra-metropolitan/houses-apartments-for-rent/...,6,2026-03-02
+```
+
+The queue preserves all columns from the original URL CSV, not just the `url` column.
+
+## Implementation Details
+
+From `main.py:152-206`, the `build_resume_queue()` function:
+
+1. Reads all rows from the URL CSV
+2. Loads the `url` column from the data CSV into a set
+3. Filters out URLs that are already in the data CSV
+4. Writes remaining rows to the resume queue CSV
+5. Returns counts: `(source_total, already_scraped, pending_total)`
+
+<CodeGroup>
+```python Queue Generation Logic
+def build_resume_queue(
+    urls_csv: Path, data_csv: Path, queue_csv: Path
+) -> tuple[int, int, int]:
+    # Read all URL rows
+    with open(urls_csv, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    
+    # Get already-scraped URLs
+    scraped_urls = read_url_set(data_csv, "url")
+    
+    # Filter out scraped URLs
+    source_seen: set[str] = set()
+    pending_rows: list[dict[str, str]] = []
+    
+    for row in rows:
+        url = (row.get("url") or "").strip()
+        if not url or url in source_seen:
+            continue
+        source_seen.add(url)
+        if url in scraped_urls:
+            continue
+        pending_rows.append(row)
+    
+    # Write queue CSV
+    with open(queue_csv, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, ...)
+        writer.writeheader()
+        writer.writerows(pending_rows)
+    
+    return (len(source_seen), len(source_seen) - len(pending_rows), len(pending_rows))
+```
+</CodeGroup>
+
+## Edge Cases
+
+### No pending URLs
+
+If all URLs have already been scraped:
+
+```
+┌─ Resume Queue Summary ────────────────────────────┐
+│ Source  │ URL Pool │ Already Scraped │ Pending   │
+├─────────┼──────────┼─────────────────┼───────────┤
+│ Jiji    │    1,245 │           1,245 │         0 │
+└───────────────────────────────────────────────────┘
+
+No spiders queued.
+Done.
+```
+
+No resume queue file is created, and no spider runs.
+
+### URL CSV doesn't exist
+
+If the URL CSV file is missing:
+
+```
+┌─ Resume Queue Summary ────────────────────────────┐
+│ Source  │ URL Pool │ Already Scraped │ Pending   │
+├─────────┼──────────┼─────────────────┼───────────┤
+│ Jiji    │        0 │               0 │         0 │
+└───────────────────────────────────────────────────┘
+```
+
+<Warning>
+Run "Collect listing URLs" first to generate the URL CSV.
+</Warning>
+
+### Data CSV doesn't exist
+
+If the data CSV is missing, resume mode treats all URLs as pending:
+
+```
+┌─ Resume Queue Summary ────────────────────────────┐
+│ Source  │ URL Pool │ Already Scraped │ Pending   │
+├─────────┼──────────┼─────────────────┼───────────┤
+│ Jiji    │    1,245 │               0 │     1,245 │
+└───────────────────────────────────────────────────┘
+```
+
+This is equivalent to scraping all URLs fresh.
+
+## Example Workflow
+
+Scenario: You're scraping 5,000 Jiji listings but the script crashes after 3,000.
+
+<Steps>
+  <Step title="Initial scrape (crashes mid-run)">
+    ```bash
+    python main.py
+    # Choose: Scrape listing details
+    # Choose: Jiji only
+    # [Scrapes 3,000 URLs, then crashes]
+    ```
+    
+    Result: `outputs/data/jiji_data.csv` contains 3,000 rows
+  </Step>
+  
+  <Step title="Resume the scrape">
+    ```bash
+    python main.py
+    # Choose: Resume listing scrape (missing URLs only)
+    # Choose: Jiji only
+    # Use default paths: Yes
+    ```
+    
+    Output:
+    ```
+    ┌─ Resume Queue Summary ──────────────────────────┐
+    │ Source │ URL Pool │ Already Scraped │ Pending  │
+    ├────────┼──────────┼─────────────────┼──────────┤
+    │ Jiji   │    5,000 │           3,000 │    2,000 │
+    └─────────────────────────────────────────────────┘
+    ```
+    
+    The spider scrapes the remaining 2,000 URLs.
+  </Step>
+  
+  <Step title="Verify completion">
+    ```bash
+    python main.py
+    # Choose: Resume listing scrape (missing URLs only)
+    # Choose: Jiji only
+    ```
+    
+    Output:
+    ```
+    ┌─ Resume Queue Summary ──────────────────────────┐
+    │ Source │ URL Pool │ Already Scraped │ Pending  │
+    ├────────┼──────────┼─────────────────┼──────────┤
+    │ Jiji   │    5,000 │           5,000 │        0 │
+    └─────────────────────────────────────────────────┘
+    
+    No spiders queued.
+    Done.
+    ```
+  </Step>
+</Steps>
+
+## URL Deduplication
+
+Resume mode handles duplicate URLs in the source URL CSV:
+
+- Duplicates within the URL CSV are removed (only the first occurrence is kept)
+- The comparison against the data CSV uses the deduplicated set
+
+<Tip>
+This ensures accurate counts even if your URL collection process created duplicates.
+</Tip>

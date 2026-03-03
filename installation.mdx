@@ -1,0 +1,179 @@
+---
+title: Installation
+description: Set up ScrapeAccraProperties with Python 3.12+ and Playwright
+---
+
+# Installation
+
+Get started with ScrapeAccraProperties by installing Python dependencies and setting up the Playwright browser for JavaScript-rendered scraping.
+
+## Prerequisites
+
+Before installing, ensure you have:
+
+<CardGroup cols={2}>
+  <Card title="Python 3.12+" icon="python">
+    The project requires Python 3.12 or higher
+  </Card>
+  <Card title="Chromium Browser" icon="chrome">
+    Playwright will install Chromium browser binaries
+  </Card>
+</CardGroup>
+
+<Note>
+  On Linux systems, you may need additional OS libraries for Playwright. The installation steps below include commands to install these dependencies.
+</Note>
+
+## Installation Steps
+
+<Steps>
+  <Step title="Clone the repository">
+    Clone the ScrapeAccraProperties repository to your local machine:
+
+    ```bash
+    git clone https://github.com/yourusername/ScrapeAccraProperties.git
+    cd ScrapeAccraProperties
+    ```
+  </Step>
+
+  <Step title="Install Python dependencies">
+    Choose your preferred package manager:
+
+    <CodeGroup>
+      ```bash uv (recommended)
+      uv sync
+      ```
+
+      ```bash pip
+      python -m venv .venv
+      source .venv/bin/activate
+      pip install -e .
+      ```
+    </CodeGroup>
+
+    <Tip>
+      Using `uv` is recommended for faster dependency resolution and installation.
+    </Tip>
+
+    ### Dependencies Installed
+
+    The following packages are installed from `pyproject.toml`:
+
+    - **scrapy** `>=2.14.1` - Web scraping framework
+    - **scrapy-playwright** `>=0.0.46` - Playwright integration for Scrapy
+    - **playwright** `>=1.58.0` - Browser automation library
+    - **rich** `>=14.3.3` - Rich terminal formatting
+    - **pandas** `>=3.0.1` - Data manipulation and CSV handling
+    - **notebook** `>=7.5.3` - Jupyter notebook support
+    - **pregex** `>=2.3.3` - Regex pattern builder
+  </Step>
+
+  <Step title="Install Playwright browser">
+    Install the Chromium browser binaries required for Playwright:
+
+    ```bash
+    python -m playwright install chromium
+    ```
+
+    <Accordion title="Linux users: Install system dependencies">
+      On Linux systems, you may need additional OS libraries. Run this command to install them:
+
+      ```bash
+      python -m playwright install-deps chromium
+      ```
+
+      This installs system dependencies like graphics libraries, font rendering libraries, and other OS-level requirements for running Chromium in headless mode.
+    </Accordion>
+  </Step>
+
+  <Step title="Verify installation">
+    Verify that everything is set up correctly by running the interactive CLI:
+
+    <CodeGroup>
+      ```bash Standard Python
+      python main.py
+      ```
+
+      ```bash With uv
+      uv run python main.py
+      ```
+    </CodeGroup>
+
+    You should see the interactive menu:
+
+    ```text
+    ╭─────────────────────── main.py ────────────────────────╮
+    │ Accra Property Scraper                                 │
+    │ - Interactive multi-spider runner                      │
+    │ - Listing resume mode queues only missing URLs         │
+    │ - CSV writes happen item-by-item during crawl          │
+    │ - Jiji listings are cleaned to outputs/data/raw.csv    │
+    ╰────────────────────────────────────────────────────────╯
+
+    Choose action
+      1. Collect listing URLs
+      2. Scrape listing details
+      3. Resume listing scrape (missing URLs only)
+      4. Exit
+    Enter choice [1]:
+    ```
+
+    <Tip>
+      If you see this menu, your installation is successful!
+    </Tip>
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Browser launch failures" icon="exclamation-triangle">
+    If you encounter browser launch errors, ensure Playwright's Chromium is installed:
+
+    ```bash
+    python -m playwright install chromium
+    ```
+
+    If the issue persists, try reinstalling with system dependencies (Linux):
+
+    ```bash
+    python -m playwright install-deps chromium
+    ```
+  </Accordion>
+
+  <Accordion title="Linux dependency errors" icon="linux">
+    On Linux systems, you may see errors related to missing system libraries. Run:
+
+    ```bash
+    python -m playwright install-deps chromium
+    ```
+
+    This installs all required OS-level dependencies for running Chromium.
+  </Accordion>
+
+  <Accordion title="Python version issues" icon="python">
+    Ensure you're using Python 3.12 or higher:
+
+    ```bash
+    python --version
+    ```
+
+    If you have multiple Python versions installed, you may need to use `python3.12` or `python3` instead of `python`.
+  </Accordion>
+
+  <Accordion title="Virtual environment not activated" icon="terminal">
+    If using `pip` installation, ensure your virtual environment is activated:
+
+    ```bash
+    source .venv/bin/activate  # Linux/macOS
+    # or
+    .venv\Scripts\activate  # Windows
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<Card title="Quick Start Tutorial" icon="rocket" href="/quickstart">
+  Now that you've installed ScrapeAccraProperties, follow the quickstart guide to scrape your first listings!
+</Card>

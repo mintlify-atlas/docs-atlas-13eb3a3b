@@ -1,0 +1,118 @@
+---
+title: 'Collect URLs'
+description: 'Discover and collect property listing URLs from search pages'
+---
+
+The URL collection phase crawls search result pages and extracts listing URLs. This is the first step in the scraping workflow.
+
+## Overview
+
+URL collection spiders visit paginated search result pages and extract individual listing URLs. The URLs are saved to CSV files in `outputs/urls/` for use in the listing scrape phase.
+
+Each spider supports:
+- Custom start page
+- Auto-detection of total pages
+- Fixed page count modes
+- URL deduplication
+
+## Jiji URL Spider
+
+Collects listing URLs from Jiji Ghana's Greater Accra rental search.
+
+### Arguments
+
+<ParamField path="start_page" type="integer" default="1">
+  The page number to start collecting URLs from. Useful for resuming interrupted crawls.
+</ParamField>
+
+<ParamField path="max_pages" type="integer" optional>
+  Fixed number of pages to scrape from `start_page`. Mutually exclusive with `total_listing`.
+</ParamField>
+
+<ParamField path="total_listing" type="integer" optional>
+  Expected number of listings to collect. The spider automatically calculates required pages (20 listings per page). Mutually exclusive with `max_pages`.
+</ParamField>
+
+### Auto-detection Mode
+
+If neither `max_pages` nor `total_listing` is provided, the spider automatically detects the total number of results from the first page and calculates required pages.
+
+### Output
+
+**File:** `outputs/urls/jiji_urls.csv`
+
+**Fields:**
+- `url` - Full listing URL
+- `page` - Page number where URL was found
+- `fetch_date` - Date when URL was collected (YYYY-MM-DD)
+
+### Examples
+
+**Auto-detect total pages:**
+```bash
+scrapy crawl jiji_urls -a start_page=1
+```
+
+**Collect first 5 pages:**
+```bash
+scrapy crawl jiji_urls -a start_page=1 -a max_pages=5
+```
+
+**Collect approximately 200 listings:**
+```bash
+scrapy crawl jiji_urls -a start_page=1 -a total_listing=200
+```
+The spider will scrape 10 pages (200 ÷ 20 listings per page).
+
+**Resume from page 3:**
+```bash
+scrapy crawl jiji_urls -a start_page=3 -a max_pages=10
+```
+
+## Meqasa URL Spider
+
+Collects listing URLs from Meqasa's Greater Accra rental search.
+
+### Arguments
+
+<ParamField path="start_page" type="integer" default="1">
+  The page number to start collecting URLs from.
+</ParamField>
+
+<ParamField path="total_pages" type="integer" optional>
+  Fixed number of pages to scrape from `start_page`. If not provided, auto-detection is used.
+</ParamField>
+
+### Auto-detection Mode
+
+If `total_pages` is not provided, the spider reads the total listing count from the first page and calculates required pages (16 listings per page).
+
+### Output
+
+**File:** `outputs/urls/meqasa_urls.csv`
+
+**Fields:**
+- `url` - Full listing URL
+- `page` - Page number where URL was found
+- `fetch_date` - Date when URL was collected (YYYY-MM-DD)
+
+### Examples
+
+**Auto-detect total pages:**
+```bash
+scrapy crawl meqasa_urls -a start_page=1
+```
+
+**Collect first 5 pages:**
+```bash
+scrapy crawl meqasa_urls -a start_page=1 -a total_pages=5
+```
+
+**Resume from page 10:**
+```bash
+scrapy crawl meqasa_urls -a start_page=10
+```
+
+<Note>
+URL CSVs grow incrementally during the crawl. Duplicate URLs are automatically filtered based on the `url` column.
+</Note>

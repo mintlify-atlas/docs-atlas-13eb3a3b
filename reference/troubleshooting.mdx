@@ -1,0 +1,526 @@
+---
+title: Troubleshooting
+description: Solutions to common issues with ScrapeAccraProperties
+---
+
+## Common Issues
+
+<Accordion title="No URLs found in CSV">
+  **Problem:**
+  ```
+  ERROR: No URLs found in outputs/urls/jiji_urls.csv
+  ```
+
+  **Cause:**
+  You're trying to run a listing spider before collecting URLs.
+
+  **Solution:**
+  
+  Run URL collection first:
+  
+  ```bash
+  python main.py
+  # Select: "Collect listing URLs" → Choose site
+  ```
+  
+  Or run URL spider directly:
+  
+  ```bash
+  scrapy crawl jiji_urls -a start_page=1 -a max_pages=5
+  scrapy crawl meqasa_urls -a start_page=1 -a total_pages=5
+  ```
+
+  **Verify URLs were collected:**
+  ```bash
+  ls -lh outputs/urls/
+  # Should show jiji_urls.csv and/or meqasa_urls.csv
+  
+  wc -l outputs/urls/jiji_urls.csv
+  # Should show more than 1 line (header + data)
+  ```
+</Accordion>
+
+<Accordion title="Browser launch failures">
+  **Problem:**
+  ```
+  playwright._impl._api_types.Error: Executable doesn't exist
+  ```
+  or
+  ```
+  Browser closed unexpectedly
+  ```
+
+  **Cause:**
+  Playwright browser binaries not installed.
+
+  **Solution:**
+  
+  Install Chromium browser:
+  
+  ```bash
+  python -m playwright install chromium
+  ```
+
+  **On Linux, also install system dependencies:**
+  
+  ```bash
+  python -m playwright install-deps chromium
+  ```
+
+  **Verify installation:**
+  ```bash
+  python -m playwright install --help
+  # Should show available browsers including chromium
+  ```
+
+  **Alternative - use system Chromium:**
+  
+  Edit `property_bot/settings.py`:
+  ```python
+  PLAYWRIGHT_LAUNCH_OPTIONS = {
+      "headless": True,
+      "executable_path": "/usr/bin/chromium-browser",  # Adjust path
+  }
+  ```
+</Accordion>
+
+<Accordion title="Empty or partial field extraction">
+  **Problem:**
+  Many fields are empty or missing in output CSV:
+  - `bedrooms`, `bathrooms`, `price` are `NaN`
+  - `amenities` is empty `[]`
+  - `description` is blank
+
+  **Cause:**
+  Target site HTML structure changed, CSS selectors no longer match.
+
+  **Diagnosis:**
+  
+  1. Visit a listing URL manually and inspect HTML
+  2. Check if selectors still match:
+  
+  **Jiji selectors (in `jiji_listing.py:72-144`):**
+  ```python
+  # Title
+  "h1 div::text, .b-advert-title-outer h1::text"
+  
+  # Location  
+  ".b-advert-info-statistics--region::text"
+  
+  # Price
+  ".b-alt-advert-price-wrapper span.qa-advert-price-view-value::text"
+  
+  # Properties
+  ".b-advert-attribute"
+  
+  # Amenities
+  ".b-advert-attributes__tag"
+  
+  # Description
+  ".qa-description-text::text"
+  ```
+  
+  **Meqasa selectors (in `meqasa_listing.py:77-102`):**
+  ```python
+  # Title
+  "h1::text"
+  
+  # Price
+  ".price-wrapper > div:nth-child(1)::text"
+  
+  # Details table
+  "table.table tr"
+  
+  # Description
+  ".description p::text"
+  ```
+
+  **Solution:**
+  
+  Update CSS selectors in spider files:
+  
+  1. Open browser DevTools on target listing page
+  2. Find correct selectors for each field
+  3. Update spider parse methods with new selectors
+  4. Test with single URL:
+  
+  ```bash
+  scrapy shell "https://jiji.com.gh/..."
+  >>> response.css("YOUR_NEW_SELECTOR::text").get()
+  ```
+
+  **Example fix for Jiji price selector:**
+  ```python
+  # Old selector (stopped working)
+  price = response.css(".qa-advert-price-view-value::text").get()
+  
+  # Updated selector (inspect actual HTML)
+  price = response.css(".price-container .amount::text").get()
+  ```
+</Accordion>
+
+<Accordion title="Dependency errors on install">
+  **Problem:**
+  ```
+  ERROR: Could not find a version that satisfies the requirement scrapy
+  ```
+  or
+  ```
+  error: externally-managed-environment
+  ```
+
+  **Cause:**
+  - Wrong Python version (need 3.12+)
+  - System Python blocking pip install
+  - Missing build dependencies
+
+  **Solution:**
+  
+  **Check Python version:**
+  ```bash
+  python --version
+  # Should show Python 3.12.x or higher
+  ```
+
+  **Install with uv (recommended):**
+  ```bash
+  # Install uv if not already installed
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  
+  # Sync dependencies
+  uv sync
+  ```
+
+  **Install with venv + pip:**
+  ```bash
+  python -m venv .venv
+  source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+  pip install -e .
+  ```
+
+  **On Linux, install build dependencies:**
+  ```bash
+  # Ubuntu/Debian
+  sudo apt-get update
+  sudo apt-get install python3-dev build-essential libssl-dev libffi-dev
+  
+  # Fedora/RHEL
+  sudo dnf install python3-devel gcc openssl-devel libffi-devel
+  ```
+</Accordion>
+
+<Accordion title="Rate limiting or 403 errors">
+  **Problem:**
+  ```
+  HTTP 403 Forbidden
+  ```
+  or many requests timing out after initial success.
+
+  **Cause:**
+  - Target site detecting bot traffic
+  - Too many concurrent requests
+  - Missing or blocked user agent
+
+  **Solution:**
+  
+  **Reduce concurrency in `property_bot/settings.py`:**
+  ```python
+  CONCURRENT_REQUESTS = 8  # Reduce from 16
+  CONCURRENT_REQUESTS_PER_DOMAIN = 4  # Reduce from 8
+  DOWNLOAD_DELAY = 2  # Increase from 0.5
+  ```
+
+  **Enable autothrottle (already enabled by default):**
+  ```python
+  AUTOTHROTTLE_ENABLED = True
+  AUTOTHROTTLE_START_DELAY = 1
+  AUTOTHROTTLE_MAX_DELAY = 10
+  AUTOTHROTTLE_TARGET_CONCURRENCY = 2.0
+  ```
+
+  **Verify user agent is set:**
+  ```python
+  USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ..."
+  ```
+
+  **Check robots.txt compliance:**
+  ```python
+  ROBOTSTXT_OBEY = True  # Already set in project
+  ```
+
+  **Monitor retry stats:**
+  ```bash
+  # Look for retry logs during scrape
+  # Scrapy will show retry attempts and status codes
+  ```
+</Accordion>
+
+<Accordion title="Cleaning script errors">
+  **Problem:**
+  ```
+  KeyError: 'location'
+  ```
+  or
+  ```
+  ValueError: could not convert string to float: 'Negotiable'
+  ```
+
+  **Cause:**
+  Unexpected data format in raw CSV.
+
+  **Solution:**
+  
+  **Check raw data:**
+  ```bash
+  head -n 5 outputs/data/jiji_data.csv
+  # Verify expected columns exist
+  ```
+
+  **Common fixes:**
+  
+  1. **Missing location column:**
+  ```python
+  # In clean.py, add check before extraction
+  if "location" in df.columns:
+      df["locality"] = df["location"].apply(extract_locality)
+      df = df.drop(columns=["location"])
+  else:
+      df["locality"] = "Unknown"
+  ```
+
+  2. **Non-numeric price values:**
+  ```python
+  # Filter out non-numeric prices before conversion
+  df = df[df["price"].str.contains(r"GH₵\s*\d", na=False)]
+  df["price"] = (
+      df["price"]
+      .str.replace("GH₵ ", "", regex=False)
+      .str.replace(",", "", regex=False)
+      .astype(float)
+  )
+  ```
+
+  3. **Properties field not JSON:**
+  ```python
+  # Add error handling in expand_column
+  def expand_column(df, col, sep=None):
+      try:
+          if sep:
+              encoded = df[col].str.strip().str.get_dummies(sep=sep)
+          else:
+              encoded = df[col].apply(ast.literal_eval).apply(pd.Series)
+          return df.join(encoded).drop(columns=[col])
+      except Exception as e:
+          print(f"Warning: Could not expand {col}: {e}")
+          return df
+  ```
+</Accordion>
+
+<Accordion title="Resume mode not working">
+  **Problem:**
+  Resume mode re-scrapes URLs that were already scraped.
+
+  **Cause:**
+  - URL mismatch between URL CSV and data CSV
+  - Data CSV was deleted or moved
+  - URLs in data CSV have different format (trailing slash, query params)
+
+  **Diagnosis:**
+  
+  ```bash
+  # Compare URL formats
+  head -n 3 outputs/urls/jiji_urls.csv
+  head -n 3 outputs/data/jiji_data.csv
+  
+  # Count unique URLs in each file
+  tail -n +2 outputs/urls/jiji_urls.csv | cut -d',' -f1 | sort | uniq | wc -l
+  tail -n +2 outputs/data/jiji_data.csv | cut -d',' -f1 | sort | uniq | wc -l
+  ```
+
+  **Solution:**
+  
+  URLs should match exactly. If they don't:
+  
+  1. **Check for URL normalization issues:**
+  ```python
+  # In listing spider start_requests(), normalize URLs:
+  for entry in self.urls:
+      url = entry["url"].rstrip("/")  # Remove trailing slash
+      yield scrapy.Request(url, ...)
+  ```
+
+  2. **Verify URL deduplication is working:**
+  
+  Check `_seen_urls` is loading correctly in `base_spider.py:79-93`:
+  ```python
+  if hasattr(self, "OUTPUT_CSV") and self.OUTPUT_CSV.exists():
+      with open(self.OUTPUT_CSV, newline="", encoding="utf-8") as f:
+          reader = csv.DictReader(f)
+          for row in reader:
+              val = row.get(self.URL_FIELD, "").strip()
+              if val:
+                  self._seen_urls.add(val)
+  ```
+
+  3. **Manually create resume queue:**
+  ```bash
+  # Extract missing URLs
+  comm -23 \
+    <(tail -n +2 outputs/urls/jiji_urls.csv | cut -d',' -f1 | sort) \
+    <(tail -n +2 outputs/data/jiji_data.csv | cut -d',' -f1 | sort) \
+    > missing_urls.txt
+  
+  # Create resume queue CSV
+  echo "url" > outputs/urls/jiji_resume_queue.csv
+  cat missing_urls.txt >> outputs/urls/jiji_resume_queue.csv
+  
+  # Run with custom queue
+  scrapy crawl jiji_listings -a csv_path=outputs/urls/jiji_resume_queue.csv
+  ```
+</Accordion>
+
+---
+
+## Debugging Tips
+
+### Enable Debug Logging
+
+```bash
+# Run spider with debug logs
+scrapy crawl jiji_listings -L DEBUG
+
+# Save logs to file
+scrapy crawl jiji_listings -L DEBUG --logfile=debug.log
+```
+
+### Test Single URL in Scrapy Shell
+
+```bash
+# Interactive shell for testing selectors
+scrapy shell "https://jiji.com.gh/greater-accra/..."
+
+# Test selectors
+>>> response.css("h1::text").get()
+>>> response.css(".qa-advert-price::text").get()
+>>> response.css(".b-advert-attribute::text").getall()
+```
+
+### Inspect Playwright Context
+
+```python
+# In spider parse method, add debugging
+async def parse(self, response):
+    page = response.meta.get("playwright_page")
+    
+    # Take screenshot
+    if page:
+        await page.screenshot(path="debug.png")
+    
+    # Print page content
+    content = await page.content()
+    self.logger.debug(f"Page HTML: {content[:500]}")
+```
+
+### Check CSV Output
+
+```bash
+# Validate CSV structure
+head -n 1 outputs/data/jiji_data.csv  # Check headers
+tail -n 5 outputs/data/jiji_data.csv  # Check recent entries
+
+# Count records
+wc -l outputs/data/jiji_data.csv
+
+# Find empty fields
+cut -d',' -f7 outputs/data/jiji_data.csv | grep -c '^$'  # Empty prices
+```
+
+### Verify Playwright Installation
+
+```bash
+# List installed browsers
+python -m playwright install --help
+
+# Test browser launch
+python -c "from playwright.sync_api import sync_playwright; \
+  with sync_playwright() as p: \
+    browser = p.chromium.launch(); \
+    print('Browser launched successfully'); \
+    browser.close()"
+```
+
+---
+
+## Getting Help
+
+### Check Scrapy Stats
+
+At end of spider run, Scrapy prints useful statistics:
+
+```
+'downloader/request_count': 150
+'downloader/response_count': 145
+'downloader/response_status_count/200': 140
+'downloader/response_status_count/403': 5
+'item_scraped_count': 138
+'retry/count': 8
+'retry/max_reached': 2
+```
+
+**Key metrics:**
+- `item_scraped_count` - Total items successfully saved
+- `response_status_count/403` - Blocked requests
+- `retry/max_reached` - Failed after max retries
+
+### Review Settings
+
+Key settings in `property_bot/settings.py:218-226`:
+
+```python
+ROBOTSTXT_OBEY = True
+CONCURRENT_REQUESTS = 16
+CONCURRENT_REQUESTS_PER_DOMAIN = 8
+DOWNLOAD_DELAY = 0.5
+
+# Playwright browser options
+PLAYWRIGHT_LAUNCH_OPTIONS = {
+    "headless": True,
+    "args": ["--disable-blink-features=AutomationControlled", ...]
+}
+```
+
+### Compare Output Schemas
+
+Expected fields from spiders:
+
+**Jiji:** `url`, `fetch_date`, `title`, `location`, `house_type`, `bedrooms`, `bathrooms`, `price`, `properties`, `amenities`, `description`
+
+**Meqasa:** `url`, `Title`, `Price`, `Rate`, `Description`, `fetch_date`, `Categories`, `Lease options`, `Bedrooms`, `Bathrooms`, `Garage`, `Furnished`, `Amenities`, `Address`, `Reference`, `details`
+
+---
+
+## Known Limitations
+
+<Warning>
+  - **Meqasa cleaning not implemented** - Only Jiji data goes through `clean.py`
+  - **No proxy rotation** - May hit rate limits on large scrapes
+  - **No CAPTCHA handling** - Sites may require manual intervention
+  - **Selector fragility** - HTML changes require selector updates
+</Warning>
+
+### Workarounds
+
+**For large scrapes:**
+- Split into smaller batches (50-100 pages at a time)
+- Use `DOWNLOAD_DELAY` and `AUTOTHROTTLE`
+- Run during off-peak hours
+
+**For rate limiting:**
+- Reduce `CONCURRENT_REQUESTS`
+- Increase `AUTOTHROTTLE_START_DELAY`
+- Add random delays in spider logic
+
+**For data quality:**
+- Manually review samples from output CSVs
+- Test selectors in Scrapy shell before large runs
+- Monitor `failures` count during scrape

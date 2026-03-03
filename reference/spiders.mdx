@@ -1,0 +1,555 @@
+---
+title: Spider Reference
+description: Complete API reference for all ScrapeAccraProperties spiders
+---
+
+## Overview
+
+ScrapeAccraProperties uses 4 specialized spiders built on a common base class:
+
+- **JijiUrlSpider** - Collects listing URLs from Jiji search pages
+- **JijiListingSpider** - Extracts detailed data from Jiji listings
+- **MeqasaUrlSpider** - Collects listing URLs from Meqasa search pages
+- **MeqasaListingSpider** - Extracts detailed data from Meqasa listings
+
+All spiders inherit from `PropertyBaseSpider`, which provides CSV management, progress tracking, and URL deduplication.
+
+## PropertyBaseSpider
+
+Base class providing core functionality for all property spiders.
+
+**Location:** `property_bot/spiders/base_spider.py:55`
+
+### Class Attributes
+
+<ParamField path="OUTPUT_CSV" type="Path" required>
+  Path to the output CSV file where scraped items will be saved
+</ParamField>
+
+<ParamField path="URL_FIELD" type="str" default="url">
+  Field name used for URL deduplication
+</ParamField>
+
+<ParamField path="OUTPUT_FIELDS" type="tuple[str, ...] | None" default="None">
+  Ordered tuple of field names for CSV output. If `None`, fields are dynamically determined from items.
+</ParamField>
+
+### Instance Attributes
+
+<ParamField path="scraped_count" type="int">
+  Total number of items scraped in current session
+</ParamField>
+
+<ParamField path="failures" type="int">
+  Total number of failed requests
+</ParamField>
+
+<ParamField path="_seen_urls" type="set">
+  Set of URLs already scraped (loaded from existing CSV on startup)
+</ParamField>
+
+### Core Methods
+
+#### save_item()
+
+```python
+def save_item(self, item: dict) -> None
+```
+
+Saves an item to the output CSV with automatic deduplication and field management.
+
+- Serializes complex types (dict, list) to JSON
+- Skips duplicate URLs based on `URL_FIELD`
+- Creates CSV with headers if file doesn't exist
+- Thread-safe with CSV lock
+
+**Example from JijiUrlSpider:**
+
+```python
+self.save_item(
+    {"url": response.urljoin(href), "page": curr_page, "fetch_date": today}
+)
+```
+
+#### update_ui()
+
+```python
+def update_ui(self, current_page=None, total_pages=None) -> None
+```
+
+Updates the Rich progress display with current spider statistics.
+
+**Parameters:**
+- `current_page` - Current page number or item count
+- `total_pages` - Total pages or items to process
+
+#### errback_close_page()
+
+```python
+async def errback_close_page(self, failure) -> None
+```
+
+Error callback that increments failure count and closes Playwright page.
+
+### Private Methods
+
+<Accordion title="_serialize_for_csv()">
+  ```python
+  @staticmethod
+  def _serialize_for_csv(value: Any) -> Any
+  ```
+  
+  Converts Python objects to CSV-safe strings:
+  - `dict` → JSON string
+  - `list/tuple/set` → JSON array string
+  - `str` → Normalized whitespace
+  - `None` → Empty string
+  
+  **Example:**
+  ```python
+  properties = {"Bedrooms": "3", "Condition": "Newly Built"}
+  serialized = self._serialize_for_csv(properties)
+  # '{"Bedrooms": "3", "Condition": "Newly Built"}'
+  ```
+</Accordion>
+
+<Accordion title="_normalize_item()">
+  ```python
+  def _normalize_item(self, item: dict[str, Any]) -> dict[str, Any]
+  ```
+  
+  Applies `_serialize_for_csv()` to all values in an item dictionary.
+</Accordion>
+
+<Accordion title="_get_output_fieldnames()">
+  ```python
+  def _get_output_fieldnames(self, item: dict[str, Any]) -> list[str]
+  ```
+  
+  Returns ordered list of CSV column names. If `OUTPUT_FIELDS` is `None`, dynamically appends new fields as they appear.
+</Accordion>
+
+---
+
+## JijiUrlSpider
+
+Collects rental listing URLs from Jiji Ghana search result pages.
+
+**Spider Name:** `jiji_urls`  
+**Location:** `property_bot/spiders/jiji_urls.py:16`
+
+### Configuration
+
+<ParamField path="name" type="str" default="jiji_urls">
+  Spider identifier for Scrapy
+</ParamField>
+
+<ParamField path="OUTPUT_CSV" type="Path">
+  `outputs/urls/jiji_urls.csv`
+</ParamField>
+
+<ParamField path="OUTPUT_FIELDS" type="tuple">
+  `("url", "page", "fetch_date")`
+</ParamField>
+
+### Constructor Arguments
+
+<ParamField path="start_page" type="int" default="1">
+  First page number to scrape
+</ParamField>
+
+<ParamField path="max_pages" type="int | None" default="None">
+  Maximum number of pages to scrape. Mutually exclusive with `total_listing`.
+</ParamField>
+
+<ParamField path="total_listing" type="int | None" default="None">
+  Automatically calculates `max_pages` based on listing count (20 listings/page). Overrides `max_pages` if provided.
+</ParamField>
+
+### Behavior
+
+- **Auto-detection mode:** If neither `max_pages` nor `total_listing` is specified, spider scrapes first page and auto-detects total result count from breadcrumb
+- **URL format:** `https://jiji.com.gh/greater-accra/houses-apartments-for-rent?page={page_num}`
+- **Listings per page:** 20
+- **Wait strategy:** Waits for `.b-advert-listing` selector (15s timeout)
+
+### Methods
+
+#### start_requests()
+
+```python
+def start_requests(self) -> Iterator[scrapy.Request]
+```
+
+Generates requests based on configuration:
+- If `max_pages` specified → yields all page requests immediately
+- Otherwise → yields single detector request for first page
+
+#### parse()
+
+```python
+def parse(self, response) -> Iterator[scrapy.Request]
+```
+
+**Auto-detection logic:**
+```python
+if count_text := response.css(
+    'div.b-breadcrumb-link--current-url span[property="name"]::text'
+).get():
+    if match := re.search(r"([\d,]+)\s+results", count_text):
+        total = int(match.group(1).replace(",", ""))
+        self.max_pages = math.ceil(total / LISTINGS_PER_PAGE)
+```
+
+**URL extraction:**
+```python
+for href in response.css("div.b-advert-listing a::attr(href)").getall():
+    self.save_item(
+        {"url": response.urljoin(href), "page": curr_page, "fetch_date": today}
+    )
+```
+
+### Usage Examples
+
+```bash
+# Scrape first 10 pages
+scrapy crawl jiji_urls -a start_page=1 -a max_pages=10
+
+# Auto-detect and scrape enough pages for 500 listings
+scrapy crawl jiji_urls -a start_page=1 -a total_listing=500
+
+# Auto-detect all available listings
+scrapy crawl jiji_urls -a start_page=1
+```
+
+---
+
+## JijiListingSpider
+
+Extracts structured rental data from individual Jiji listing pages.
+
+**Spider Name:** `jiji_listings`  
+**Location:** `property_bot/spiders/jiji_listing.py:13`
+
+### Configuration
+
+<ParamField path="name" type="str" default="jiji_listings">
+  Spider identifier
+</ParamField>
+
+<ParamField path="OUTPUT_CSV" type="Path">
+  `outputs/data/jiji_data.csv`
+</ParamField>
+
+<ParamField path="OUTPUT_FIELDS" type="tuple">
+  ```python
+  (
+      "url", "fetch_date", "title", "location",
+      "house_type", "bedrooms", "bathrooms", "price",
+      "properties", "amenities", "description"
+  )
+  ```
+</ParamField>
+
+### Constructor Arguments
+
+<ParamField path="csv_path" type="str | Path" default="outputs/urls/jiji_urls.csv">
+  Path to CSV containing URLs to scrape. Can be absolute or relative to project root.
+</ParamField>
+
+### Extracted Fields
+
+| Field | Source | Example |
+|-------|--------|--------|
+| `url` | Response URL | `https://jiji.com.gh/...` |
+| `fetch_date` | From URL CSV or current date | `2026-03-03` |
+| `title` | `h1 div::text` | `3 Bedroom Apartment` |
+| `location` | `.b-advert-info-statistics--region::text` | `Accra Metropolitan, Greater Accra` |
+| `house_type` | Icon attributes or properties | `Apartment` |
+| `bedrooms` | Icon attributes or properties | `3 Bedrooms` |
+| `bathrooms` | Icon attributes or properties | `2 Bathrooms` |
+| `price` | `.qa-advert-price-view-value::text` | `GH₵ 3,500` |
+| `properties` | `.b-advert-attribute` (dict) | `{"Condition": "Newly Built", ...}` |
+| `amenities` | `.b-advert-attributes__tag` (list) | `["Wi-Fi", "24-hour Electricity", ...]` |
+| `description` | `.qa-description-text::text` | Full text description |
+
+### Methods
+
+#### _load_urls()
+
+```python
+def _load_urls(self) -> list[dict]
+```
+
+Reads URL CSV and returns list of `{"url": ..., "fetch_date": ...}` dictionaries.
+
+#### parse()
+
+```python
+async def parse(self, response) -> None
+```
+
+Asynchronous parser with Playwright page access.
+
+**Properties extraction:**
+```python
+properties = {
+    prop.css(".b-advert-attribute__key::text").get("").strip().rstrip(":"): 
+    prop.css(".b-advert-attribute__value::text").get("").strip()
+    for prop in response.css(".b-advert-attribute")
+    if prop.css(".b-advert-attribute__key::text").get()
+}
+```
+
+**Amenities extraction (async):**
+```python
+if await asyncio.wait_for(
+    page.query_selector(".b-advert-attributes--tags"), timeout=1.5
+):
+    elements = await page.query_selector_all(".b-advert-attributes__tag")
+    texts = await asyncio.gather(
+        *[el.text_content() for el in elements],
+        return_exceptions=True,
+    )
+    amenities = [t.strip() for t in texts if isinstance(t, str) and t.strip()]
+```
+
+**Fallback logic:**
+```python
+"house_type": house_type or properties.get("Subtype") or properties.get("Type"),
+"bedrooms": bedrooms or properties.get("Bedrooms"),
+"bathrooms": bathrooms or properties.get("Bathrooms") or properties.get("Toilets"),
+```
+
+### Usage Example
+
+```bash
+# Scrape URLs from default file
+scrapy crawl jiji_listings
+
+# Scrape URLs from custom file
+scrapy crawl jiji_listings -a csv_path=outputs/urls/jiji_resume_queue.csv
+```
+
+---
+
+## MeqasaUrlSpider
+
+Collects rental listing URLs from Meqasa search result pages.
+
+**Spider Name:** `meqasa_urls`  
+**Location:** `property_bot/spiders/meqasa_urls.py:16`
+
+### Configuration
+
+<ParamField path="name" type="str" default="meqasa_urls">
+  Spider identifier
+</ParamField>
+
+<ParamField path="OUTPUT_CSV" type="Path">
+  `outputs/urls/meqasa_urls.csv`
+</ParamField>
+
+<ParamField path="OUTPUT_FIELDS" type="tuple">
+  `("url", "page", "fetch_date")`
+</ParamField>
+
+### Constructor Arguments
+
+<ParamField path="start_page" type="int" default="1">
+  First page number to scrape
+</ParamField>
+
+<ParamField path="total_pages" type="int | None" default="None">
+  Total number of pages to scrape. If not specified, auto-detects from result count.
+</ParamField>
+
+### Behavior
+
+- **Auto-detection mode:** If `total_pages` not specified, scrapes first page and reads count from `#headfiltercount`
+- **URL format:** `https://meqasa.com/properties-for-rent-in-Greater%20Accra-region?w={page_num}`
+- **Listings per page:** 16
+- **Wait strategy:** Waits for `.mqs-prop-dt-wrapper` selector (15s timeout)
+
+### Methods
+
+#### parse()
+
+```python
+def parse(self, response) -> Iterator[scrapy.Request]
+```
+
+**Auto-detection:**
+```python
+if raw_count := response.css("#headfiltercount::text").get():
+    total = int(re.sub(r"[^\d]", "", raw_count))
+    self.total_pages = math.ceil(total / LISTINGS_PER_PAGE)
+    self.logger.info(f"Meqasa: {total:,} listings (~{self.total_pages} pages)")
+```
+
+**URL extraction:**
+```python
+for listing in response.css(".mqs-prop-dt-wrapper"):
+    if href := listing.css("a::attr(href)").get():
+        self.save_item(
+            {"url": response.urljoin(href), "page": curr_page, "fetch_date": today}
+        )
+```
+
+### Usage Examples
+
+```bash
+# Scrape first 5 pages
+scrapy crawl meqasa_urls -a start_page=1 -a total_pages=5
+
+# Auto-detect and scrape all pages
+scrapy crawl meqasa_urls -a start_page=1
+```
+
+---
+
+## MeqasaListingSpider
+
+Extracts structured rental data from individual Meqasa listing pages.
+
+**Spider Name:** `meqasa_listings`  
+**Location:** `property_bot/spiders/meqasa_listing.py:12`
+
+### Configuration
+
+<ParamField path="name" type="str" default="meqasa_listings">
+  Spider identifier
+</ParamField>
+
+<ParamField path="OUTPUT_CSV" type="Path">
+  `outputs/data/meqasa_data.csv`
+</ParamField>
+
+<ParamField path="OUTPUT_FIELDS" type="tuple">
+  ```python
+  (
+      "url", "Title", "Price", "Rate", "Description", "fetch_date",
+      "Categories", "Lease options", "Bedrooms", "Bathrooms",
+      "Garage", "Furnished", "Amenities", "Address", "Reference", "details"
+  )
+  ```
+</ParamField>
+
+### Constructor Arguments
+
+<ParamField path="csv_path" type="str | Path" default="outputs/urls/meqasa_urls.csv">
+  Path to CSV containing URLs to scrape
+</ParamField>
+
+### Extracted Fields
+
+| Field | Source | Example |
+|-------|--------|--------|
+| `url` | Response URL | `https://meqasa.com/property/...` |
+| `Title` | `h1::text` | `3 Bedroom Furnished Apartment` |
+| `Price` | `.price-wrapper > div:nth-child(1)::text` | `GHS 5,000` |
+| `Rate` | `.price-wrapper > div:nth-child(2)::text` | `per month` |
+| `Description` | `.description p::text` | Full description |
+| `fetch_date` | Current date | `2026-03-03` |
+| `Bedrooms` | From details table | `3` |
+| `Bathrooms` | From details table | `2` |
+| `details` | Full details table (dict) | `{"Categories": "Apartment", ...}` |
+
+### Methods
+
+#### _get_detail()
+
+```python
+@staticmethod
+def _get_detail(details: dict[str, str], *candidates: str) -> str | None
+```
+
+Case-insensitive lookup for detail fields with multiple possible key names.
+
+**Example:**
+```python
+bedrooms = self._get_detail(details, "Bedrooms", "Bedroom")
+# Matches "bedrooms", "BEDROOMS", "Bedroom", etc.
+```
+
+#### parse()
+
+```python
+def parse(self, response) -> None
+```
+
+**Details table extraction:**
+```python
+details: dict[str, str] = {}
+for row in response.css("table.table tr"):
+    if header := row.css("td[style*='font-weight: bold']::text, th::text").get():
+        values = row.css(
+            "td:nth-child(2) ::text, td:nth-child(2) li::text"
+        ).getall()
+        details[header.strip().rstrip(":")] = ", ".join(
+            v.strip() for v in values if v.strip()
+        )
+```
+
+**Flexible field extraction:**
+```python
+data = {
+    "Categories": self._get_detail(details, "Categories"),
+    "Lease options": self._get_detail(details, "Lease options", "Lease Options"),
+    "Bedrooms": self._get_detail(details, "Bedrooms", "Bedroom"),
+    # ...
+}
+```
+
+### Usage Example
+
+```bash
+# Scrape URLs from default file
+scrapy crawl meqasa_listings
+
+# Scrape URLs from custom file
+scrapy crawl meqasa_listings -a csv_path=outputs/urls/meqasa_urls.csv
+```
+
+---
+
+## Common Patterns
+
+### Playwright Integration
+
+All spiders use `scrapy-playwright` for JavaScript rendering:
+
+```python
+meta={
+    "playwright": True,
+    "playwright_context": "spider_name",  # Isolated browser context
+    "playwright_page_goto_kwargs": {
+        "wait_until": "domcontentloaded",
+        "timeout": 30000
+    },
+    "playwright_page_methods": [
+        PageMethod("wait_for_selector", ".target-element", timeout=15000)
+    ]
+}
+```
+
+### Error Handling
+
+```python
+try:
+    # Parsing logic
+    self.save_item(data)
+    self.scraped_count += 1
+except Exception as e:
+    self.failures += 1
+    self.logger.error(f"Error parsing {response.url}: {e}")
+finally:
+    if page:
+        await page.close()
+```
+
+### Progress Updates
+
+```python
+self.update_ui(current_page=self.scraped_count, total_pages=self.total_count)
+```

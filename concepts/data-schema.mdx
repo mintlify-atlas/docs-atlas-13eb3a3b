@@ -1,0 +1,497 @@
+---
+title: "Data Schema"
+description: "CSV schemas and field definitions for URL and listing data"
+---
+
+ScrapeAccraProperties outputs data to CSV files with well-defined schemas. This page documents all fields for URL CSVs, listing CSVs, and cleaned data.
+
+## URL CSV Schema
+
+URL spiders output a simple 3-column schema for both Jiji and Meqasa.
+
+### Files
+
+- `outputs/urls/jiji_urls.csv`
+- `outputs/urls/meqasa_urls.csv`
+
+### Fields
+
+<ParamField path="url" type="string" required>
+  Full URL of the listing page. Used as the unique identifier for deduplication.
+</ParamField>
+
+<ParamField path="page" type="integer" required>
+  Search result page number where this URL was found. Useful for understanding data distribution.
+</ParamField>
+
+<ParamField path="fetch_date" type="string" required>
+  Date when the URL was collected, in `YYYY-MM-DD` format.
+</ParamField>
+
+### Example
+
+```csv
+url,page,fetch_date
+https://jiji.com.gh/greater-accra/houses-apartments-for-rent/property-123,1,2024-01-15
+https://jiji.com.gh/greater-accra/houses-apartments-for-rent/property-456,1,2024-01-15
+https://jiji.com.gh/greater-accra/houses-apartments-for-rent/property-789,2,2024-01-15
+```
+
+## Jiji Listing Schema
+
+Jiji listings are extracted from individual listing pages and saved to `outputs/data/jiji_data.csv`.
+
+### Output File
+
+- `outputs/data/jiji_data.csv`
+
+### Fields
+
+<ParamField path="url" type="string" required>
+  Listing page URL (unique identifier).
+</ParamField>
+
+<ParamField path="fetch_date" type="string" required>
+  Date when the listing was scraped, in `YYYY-MM-DD` format.
+</ParamField>
+
+<ParamField path="title" type="string">
+  Property listing title as displayed on Jiji.
+  
+  Example: `"3 Bedroom Apartment for Rent in East Legon"`
+</ParamField>
+
+<ParamField path="location" type="string">
+  Geographic location extracted from the listing metadata.
+  
+  Example: `"East Legon, Accra"`
+</ParamField>
+
+<ParamField path="house_type" type="string">
+  Type of property (e.g., apartment, house, commercial).
+  
+  Extracted from icon attributes or the `Subtype` / `Type` property field.
+  
+  Example: `"Apartment"`
+</ParamField>
+
+<ParamField path="bedrooms" type="string">
+  Number of bedrooms.
+  
+  Extracted from icon attributes or the `Bedrooms` property field.
+  
+  Example: `"3 Bedrooms"`
+</ParamField>
+
+<ParamField path="bathrooms" type="string">
+  Number of bathrooms.
+  
+  Extracted from icon attributes or the `Bathrooms` / `Toilets` property field.
+  
+  Example: `"2 Bathrooms"`
+</ParamField>
+
+<ParamField path="price" type="string">
+  Rental price as displayed on the listing.
+  
+  Example: `"GH₵ 3,500"`
+</ParamField>
+
+<ParamField path="properties" type="JSON object">
+  Key-value mapping of all property attributes extracted from the "Advert Attributes" section.
+  
+  Serialized as JSON for CSV storage.
+  
+  Example:
+  ```json
+  {
+    "Bedrooms": "3",
+    "Bathrooms": "2",
+    "Type": "Apartment",
+    "Subtype": "Flat & Apartment",
+    "Condition": "Newly Built"
+  }
+  ```
+</ParamField>
+
+<ParamField path="amenities" type="JSON array">
+  List of amenities/features extracted from the tags section.
+  
+  Scraped using Playwright's async page methods to ensure dynamic content is loaded.
+  
+  Serialized as JSON for CSV storage.
+  
+  Example:
+  ```json
+  ["Air Conditioning", "Parking Space", "24/7 Security", "Water Supply"]
+  ```
+</ParamField>
+
+<ParamField path="description" type="string">
+  Full text description of the property provided by the seller.
+  
+  Whitespace is normalized before saving.
+</ParamField>
+
+### Extraction Code Example
+
+```python
+# From jiji_listing.py:72-113
+properties = {
+    prop.css(".b-advert-attribute__key::text")
+    .get("")
+    .strip()
+    .rstrip(":"): prop.css(".b-advert-attribute__value::text")
+    .get("")
+    .strip()
+    for prop in response.css(".b-advert-attribute")
+    if prop.css(".b-advert-attribute__key::text").get()
+}
+
+house_type, bathrooms, bedrooms = None, None, None
+for detail in response.css(
+    ".b-advert-icon-attribute span::text, .b-advert-icon-attribute__value::text"
+).getall():
+    dl = detail.lower()
+    if "bed" in dl:
+        bedrooms = detail.strip()
+    elif "bath" in dl:
+        bathrooms = detail.strip()
+    elif not house_type:
+        house_type = detail.strip()
+
+amenities = []
+if page:
+    try:
+        if await asyncio.wait_for(
+            page.query_selector(".b-advert-attributes--tags"), timeout=1.5
+        ):
+            elements = await page.query_selector_all(
+                ".b-advert-attributes__tag"
+            )
+            texts = await asyncio.gather(
+                *[el.text_content() for el in elements],
+                return_exceptions=True,
+            )
+            amenities = [
+                t.strip() for t in texts if isinstance(t, str) and t.strip()
+            ]
+    except Exception:
+        pass
+```
+
+## Meqasa Listing Schema
+
+Meqasa listings are extracted from individual property pages and saved to `outputs/data/meqasa_data.csv`.
+
+### Output File
+
+- `outputs/data/meqasa_data.csv`
+
+### Fields
+
+Meqasa uses a **hybrid schema**: some fields are fixed, while others are dynamically discovered from the listing's detail table.
+
+#### Fixed Fields
+
+<ParamField path="url" type="string" required>
+  Listing page URL (unique identifier).
+</ParamField>
+
+<ParamField path="Title" type="string">
+  Property title extracted from the `<h1>` tag.
+  
+  Example: `"4 Bedroom House to Let in Cantonments"`
+</ParamField>
+
+<ParamField path="Price" type="string">
+  Rental price displayed in the price wrapper.
+  
+  Example: `"$2,500"`
+</ParamField>
+
+<ParamField path="Rate" type="string">
+  Billing frequency (e.g., per month, per year).
+  
+  Example: `"per month"`
+</ParamField>
+
+<ParamField path="Description" type="string">
+  Full property description text.
+</ParamField>
+
+<ParamField path="fetch_date" type="string" required>
+  Date when the listing was scraped, in `YYYY-MM-DD` format.
+</ParamField>
+
+#### Common Dynamic Fields
+
+These fields are extracted from the listing's detail table when available:
+
+<ParamField path="Categories" type="string">
+  Property category (e.g., "Apartment", "House", "Commercial").
+</ParamField>
+
+<ParamField path="Lease options" type="string">
+  Available lease terms (e.g., "Daily, Monthly, Yearly").
+</ParamField>
+
+<ParamField path="Bedrooms" type="string">
+  Number of bedrooms.
+  
+  Example: `"4"`
+</ParamField>
+
+<ParamField path="Bathrooms" type="string">
+  Number of bathrooms.
+  
+  Example: `"3"`
+</ParamField>
+
+<ParamField path="Garage" type="string">
+  Garage or parking information.
+  
+  Example: `"2 Car Garage"`
+</ParamField>
+
+<ParamField path="Furnished" type="string">
+  Furnishing status.
+  
+  Example: `"Fully Furnished"`
+</ParamField>
+
+<ParamField path="Amenities" type="string">
+  Comma-separated list of amenities.
+  
+  Example: `"Air Conditioning, Swimming Pool, Generator"`
+</ParamField>
+
+<ParamField path="Address" type="string">
+  Full address of the property.
+</ParamField>
+
+<ParamField path="Reference" type="string">
+  Meqasa's internal reference ID for the listing.
+</ParamField>
+
+<ParamField path="details" type="JSON object">
+  Complete key-value mapping of all fields from the detail table.
+  
+  Serialized as JSON for CSV storage. This captures any additional fields not explicitly mapped.
+</ParamField>
+
+### Dynamic Field Extraction
+
+Meqasa listings use a flexible table structure. The spider extracts all available fields:
+
+```python
+# From meqasa_listing.py:77-89
+details: dict[str, str] = {}
+for row in response.css("table.table tr"):
+    if header := row.css(
+        "td[style*='font-weight: bold']::text, th::text"
+    ).get():
+        values = row.css(
+            "td:nth-child(2) ::text, td:nth-child(2) li::text"
+        ).getall()
+        details[header.strip().rstrip(":")] = ", ".join(
+            v.strip() for v in values if v.strip()
+        )
+```
+
+### Helper Method: Case-Insensitive Lookup
+
+```python
+# From meqasa_listing.py:49-55
+@staticmethod
+def _get_detail(details: dict[str, str], *candidates: str) -> str | None:
+    lowered = {key.casefold(): value for key, value in details.items()}
+    for key in candidates:
+        if value := lowered.get(key.casefold()):
+            return value
+    return None
+```
+
+This allows the spider to handle variations in field naming (e.g., "Bedroom" vs "Bedrooms").
+
+## Cleaned Data Schema (Jiji Only)
+
+After a Jiji listing scrape completes, the `clean.py` script automatically processes `jiji_data.csv` and outputs a cleaned version to `outputs/data/raw.csv`.
+
+### Output File
+
+- `outputs/data/raw.csv`
+
+### Purpose
+
+The cleaning script:
+
+- Normalizes field values (e.g., extract numeric values from "3 Bedrooms")
+- Standardizes currency formats
+- Parses JSON fields from raw data
+- Removes duplicates and invalid records
+- Prepares data for downstream analysis or machine learning
+
+<Note>
+Cleaning is currently **Jiji-only**. Meqasa data does not have an automated cleaning pipeline.
+</Note>
+
+### Automatic Execution
+
+Cleaning runs automatically after Jiji listing scrapes:
+
+```python
+# From main.py:220-243
+def run_jiji_cleaning() -> None:
+    try:
+        from clean import clean_jiji_csv
+    except Exception as exc:
+        console.print(f"[red]Skipping Jiji cleaning:[/] unable to load clean.py ({exc})")
+        return
+
+    jiji_data_csv = SITE_CONFIGS["jiji"].data_csv
+    if not jiji_data_csv.exists():
+        console.print(
+            f"[yellow]Skipping Jiji cleaning: {relpath(jiji_data_csv)} not found.[/]"
+        )
+        return
+
+    try:
+        cleaned_df = clean_jiji_csv(jiji_data_csv, JIJI_RAW_OUTPUT_CSV)
+    except Exception as exc:
+        console.print(f"[red]Jiji cleaning failed:[/] {exc}")
+        return
+
+    console.print(
+        f"[green]Jiji cleaned CSV saved:[/] {relpath(JIJI_RAW_OUTPUT_CSV)}"
+        f" ({len(cleaned_df):,} rows)"
+    )
+```
+
+## Data Serialization
+
+Complex Python types (dicts, lists) are serialized to JSON before writing to CSV:
+
+```python
+# From base_spider.py:106-116
+@staticmethod
+def _serialize_for_csv(value: Any) -> Any:
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    if isinstance(value, (list, tuple, set)):
+        return json.dumps(list(value), ensure_ascii=False)
+    if isinstance(value, str):
+        return " ".join(value.split())  # Normalize whitespace
+    return value
+```
+
+This ensures that:
+
+- Dictionaries and lists can be stored in CSV cells
+- Non-ASCII characters (e.g., Ghanaian cedi symbol ₵) are preserved
+- Whitespace in strings is normalized
+
+### Reading Serialized Fields
+
+To parse JSON fields in Python:
+
+```python
+import json
+import pandas as pd
+
+df = pd.read_csv("outputs/data/jiji_data.csv")
+
+# Parse properties field
+df['properties_dict'] = df['properties'].apply(
+    lambda x: json.loads(x) if pd.notna(x) and x else {}
+)
+
+# Parse amenities field
+df['amenities_list'] = df['amenities'].apply(
+    lambda x: json.loads(x) if pd.notna(x) and x else []
+)
+```
+
+## Schema Comparison Table
+
+<Tabs>
+  <Tab title="URL Schemas">
+    Both Jiji and Meqasa use the same URL schema:
+    
+    | Field | Type | Description |
+    |-------|------|-------------|
+    | `url` | string | Listing URL (unique) |
+    | `page` | integer | Search result page number |
+    | `fetch_date` | string | Date collected (YYYY-MM-DD) |
+  </Tab>
+  
+  <Tab title="Jiji Listings">
+    | Field | Type | Example |
+    |-------|------|----------|
+    | `url` | string | `https://jiji.com.gh/...` |
+    | `fetch_date` | string | `2024-01-15` |
+    | `title` | string | `"3 Bedroom Apartment for Rent"` |
+    | `location` | string | `"East Legon, Accra"` |
+    | `house_type` | string | `"Apartment"` |
+    | `bedrooms` | string | `"3 Bedrooms"` |
+    | `bathrooms` | string | `"2 Bathrooms"` |
+    | `price` | string | `"GH₵ 3,500"` |
+    | `properties` | JSON object | `{"Type": "Apartment", ...}` |
+    | `amenities` | JSON array | `["AC", "Parking", ...]` |
+    | `description` | string | Full listing description |
+  </Tab>
+  
+  <Tab title="Meqasa Listings">
+    | Field | Type | Example |
+    |-------|------|----------|
+    | `url` | string | `https://meqasa.com/...` |
+    | `Title` | string | `"4 Bedroom House to Let"` |
+    | `Price` | string | `"$2,500"` |
+    | `Rate` | string | `"per month"` |
+    | `Description` | string | Full property description |
+    | `fetch_date` | string | `2024-01-15` |
+    | `Categories` | string | `"Apartment"` |
+    | `Lease options` | string | `"Monthly, Yearly"` |
+    | `Bedrooms` | string | `"4"` |
+    | `Bathrooms` | string | `"3"` |
+    | `Garage` | string | `"2 Car Garage"` |
+    | `Furnished` | string | `"Fully Furnished"` |
+    | `Amenities` | string | `"AC, Pool, Generator"` |
+    | `Address` | string | Full address |
+    | `Reference` | string | Meqasa reference ID |
+    | `details` | JSON object | Complete detail table |
+  </Tab>
+</Tabs>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Always preserve the url field">
+    The `url` field is used for deduplication across runs. Never modify or remove URLs from existing CSV files if you plan to use resume mode.
+  </Accordion>
+  
+  <Accordion title="Parse JSON fields carefully">
+    Fields like `properties`, `amenities`, and `details` contain JSON. Always validate and handle JSON parsing errors when reading these fields.
+  </Accordion>
+  
+  <Accordion title="Handle missing fields gracefully">
+    Not all listings have all fields. Use `pd.notna()` or `.get()` with defaults when accessing fields in pandas or dictionaries.
+  </Accordion>
+  
+  <Accordion title="Normalize field names for Meqasa">
+    Meqasa's dynamic fields may have slight variations (e.g., "Bedroom" vs "Bedrooms"). Use case-insensitive matching or the `_get_detail()` helper pattern.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Workflow" icon="diagram-project" href="/concepts/workflow">
+    Learn about the two-phase scraping workflow
+  </Card>
+  <Card title="Spider Architecture" icon="spider" href="/concepts/spiders">
+    Understand how spiders collect and write data
+  </Card>
+</CardGroup>

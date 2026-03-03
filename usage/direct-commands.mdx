@@ -1,0 +1,273 @@
+---
+title: "Direct Commands"
+description: "Run spiders directly with scrapy crawl for maximum control and automation"
+---
+
+Bypass the interactive menu and run spiders directly using `scrapy crawl` commands. This is ideal for automation, scripting, and CI/CD pipelines.
+
+## URL Collection Spiders
+
+URL spiders collect property listing URLs from search result pages and write them to CSV files.
+
+### Jiji URL Spider
+
+<CodeGroup>
+```bash Auto-detect pages
+scrapy crawl jiji_urls -a start_page=1
+```
+
+```bash Fixed page count
+scrapy crawl jiji_urls -a start_page=1 -a max_pages=5
+```
+
+```bash Expected listing count
+scrapy crawl jiji_urls -a start_page=1 -a total_listing=200
+```
+</CodeGroup>
+
+#### Parameters
+
+<ParamField path="start_page" type="integer" default="1">
+  The search results page number to start from. Must be `>= 1`.
+</ParamField>
+
+<ParamField path="max_pages" type="integer" optional>
+  Maximum number of pages to scrape. When set, the spider scrapes exactly this many pages starting from `start_page`.
+  
+  **Example**: `max_pages=5` scrapes 5 pages total.
+  
+  <Note>Cannot be used together with `total_listing`.</Note>
+</ParamField>
+
+<ParamField path="total_listing" type="integer" optional>
+  Expected total number of listings to collect. The spider calculates how many pages are needed based on Jiji's listings per page.
+  
+  **Example**: `total_listing=200` might scrape ~9 pages (Jiji shows ~24 listings per page).
+  
+  <Note>Cannot be used together with `max_pages`.</Note>
+</ParamField>
+
+#### Output
+
+Writes to: `outputs/urls/jiji_urls.csv`
+
+```csv
+url,page,fetch_date
+https://jiji.com.gh/accra-metropolitan/houses-apartments-for-rent/...,1,2026-03-03
+```
+
+### Meqasa URL Spider
+
+<CodeGroup>
+```bash Auto-detect pages
+scrapy crawl meqasa_urls -a start_page=1
+```
+
+```bash Fixed page count
+scrapy crawl meqasa_urls -a start_page=1 -a total_pages=5
+```
+</CodeGroup>
+
+#### Parameters
+
+<ParamField path="start_page" type="integer" default="1">
+  The search results page number to start from. Must be `>= 1`.
+</ParamField>
+
+<ParamField path="total_pages" type="integer" optional>
+  Total number of pages to scrape. When set, the spider scrapes exactly this many pages starting from `start_page`.
+  
+  **Example**: `total_pages=5` scrapes 5 pages total.
+</ParamField>
+
+#### Output
+
+Writes to: `outputs/urls/meqasa_urls.csv`
+
+```csv
+url,page,fetch_date
+https://meqasa.com/properties-for-rent/ghana/greater-accra/...,1,2026-03-03
+```
+
+<Tip>
+When no page control parameter is provided (`max_pages`, `total_pages`, or `total_listing`), spiders auto-detect the total pages by parsing the site's pagination.
+</Tip>
+
+## Listing Detail Spiders
+
+Listing spiders read URLs from CSV files and scrape full property details.
+
+### Jiji Listing Spider
+
+```bash
+scrapy crawl jiji_listings -a csv_path=outputs/urls/jiji_urls.csv
+```
+
+#### Parameters
+
+<ParamField path="csv_path" type="string" required>
+  Path to the CSV file containing URLs to scrape. Must have a `url` column.
+  
+  **Default**: `outputs/urls/jiji_urls.csv`
+  
+  Can be absolute or relative to project root.
+</ParamField>
+
+#### Output
+
+Writes to: `outputs/data/jiji_data.csv`
+
+Key fields:
+- `url`
+- `fetch_date`
+- `title`
+- `location`
+- `house_type`
+- `bedrooms`
+- `bathrooms`
+- `price`
+- `properties` (serialized mapping)
+- `amenities` (serialized list)
+- `description`
+
+<Note>
+After scraping completes, the interactive runner (`main.py`) automatically runs `clean.py` to produce a cleaned dataset at `outputs/data/raw.csv`. This cleaning step does **not** run when using direct commands.
+</Note>
+
+### Meqasa Listing Spider
+
+```bash
+scrapy crawl meqasa_listings -a csv_path=outputs/urls/meqasa_urls.csv
+```
+
+#### Parameters
+
+<ParamField path="csv_path" type="string" required>
+  Path to the CSV file containing URLs to scrape. Must have a `url` column.
+  
+  **Default**: `outputs/urls/meqasa_urls.csv`
+  
+  Can be absolute or relative to project root.
+</ParamField>
+
+#### Output
+
+Writes to: `outputs/data/meqasa_data.csv`
+
+Base fields:
+- `url`
+- `Title`
+- `Price`
+- `Rate`
+- `Description`
+- `fetch_date`
+
+Additional columns are extracted from listing detail tables and vary by listing.
+
+## Custom CSV Paths
+
+You can specify custom paths for both input (URL CSVs) and output (data CSVs) by modifying the spider arguments.
+
+### Reading from Custom URL CSV
+
+```bash
+scrapy crawl jiji_listings -a csv_path=custom/input/my_urls.csv
+```
+
+<Note>
+The CSV must contain a `url` column. Other columns are ignored.
+</Note>
+
+### Example: Full Workflow
+
+<Steps>
+  <Step title="Collect Jiji URLs (first 10 pages)">
+    ```bash
+    scrapy crawl jiji_urls -a start_page=1 -a max_pages=10
+    ```
+    
+    Output: `outputs/urls/jiji_urls.csv`
+  </Step>
+  
+  <Step title="Scrape Jiji listing details">
+    ```bash
+    scrapy crawl jiji_listings -a csv_path=outputs/urls/jiji_urls.csv
+    ```
+    
+    Output: `outputs/data/jiji_data.csv`
+  </Step>
+  
+  <Step title="Collect Meqasa URLs (auto-detect pages)">
+    ```bash
+    scrapy crawl meqasa_urls -a start_page=1
+    ```
+    
+    Output: `outputs/urls/meqasa_urls.csv`
+  </Step>
+  
+  <Step title="Scrape Meqasa listing details">
+    ```bash
+    scrapy crawl meqasa_listings -a csv_path=outputs/urls/meqasa_urls.csv
+    ```
+    
+    Output: `outputs/data/meqasa_data.csv`
+  </Step>
+</Steps>
+
+## Automation Example
+
+Create a bash script to run the full workflow:
+
+```bash scrape.sh
+#!/bin/bash
+
+set -e
+
+echo "Collecting URLs..."
+scrapy crawl jiji_urls -a start_page=1 -a max_pages=20
+scrapy crawl meqasa_urls -a start_page=1
+
+echo "Scraping listing details..."
+scrapy crawl jiji_listings -a csv_path=outputs/urls/jiji_urls.csv
+scrapy crawl meqasa_listings -a csv_path=outputs/urls/meqasa_urls.csv
+
+echo "Done!"
+```
+
+Run it:
+
+```bash
+chmod +x scrape.sh
+./scrape.sh
+```
+
+## Error Handling
+
+<Warning>
+If the URL CSV file doesn't exist or is empty, the listing spider will exit with an error message.
+</Warning>
+
+Common errors:
+
+```
+No URLs found in outputs/urls/jiji_urls.csv
+```
+
+**Solution**: Run the URL collection spider first.
+
+```
+FileNotFoundError: outputs/urls/jiji_urls.csv
+```
+
+**Solution**: Verify the path is correct and the file exists.
+
+## CSV Output Behavior
+
+- **Incremental writes**: Each scraped item is written immediately (item-by-item)
+- **URL deduplication**: The same URL is not added twice to URL CSVs
+- **Append mode**: Listing spiders append to existing data CSVs by default
+- **Auto-created directories**: `outputs/urls/` and `outputs/data/` are created automatically if missing
+
+<Tip>
+For completely fresh data, delete the existing CSV files before running the spiders.
+</Tip>

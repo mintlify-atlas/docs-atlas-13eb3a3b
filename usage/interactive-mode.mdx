@@ -1,0 +1,234 @@
+---
+title: "Interactive Mode"
+description: "Use the interactive menu system to run scraping operations with guided prompts"
+---
+
+Interactive mode provides a user-friendly CLI menu that guides you through all scraping operations with prompts and validation.
+
+## Launching Interactive Mode
+
+Start the interactive runner:
+
+<CodeGroup>
+```bash Standard Python
+python main.py
+```
+
+```bash Using uv
+uv run python main.py
+```
+</CodeGroup>
+
+You'll see the welcome panel:
+
+```
+┌─ main.py ──────────────────────────────────────────┐
+│ Accra Property Scraper                             │
+│ - Interactive multi-spider runner                  │
+│ - Listing resume mode queues only missing URLs     │
+│ - CSV writes happen item-by-item during crawl      │
+│ - Jiji listings are cleaned to outputs/data/raw.csv│
+└────────────────────────────────────────────────────┘
+```
+
+## Main Menu
+
+The main menu presents four action options:
+
+```
+Choose action
+  1. Collect listing URLs
+  2. Scrape listing details
+  3. Resume listing scrape (missing URLs only)
+  4. Exit
+Enter choice [1]:
+```
+
+<Note>
+Press Enter to accept the default choice shown in brackets `[1]`.
+</Note>
+
+## Site Selection
+
+For each action, you'll be prompted to select which site(s) to scrape:
+
+```
+Select source
+  1. Jiji only
+  2. Meqasa only
+  3. Both Jiji and Meqasa
+Enter choice [3]:
+```
+
+<Tip>
+Choosing "Both" runs spiders for both sites sequentially in a single process.
+</Tip>
+
+## Action 1: Collect Listing URLs
+
+Collects property listing URLs from search result pages.
+
+<Steps>
+  <Step title="Select sites">
+    Choose Jiji, Meqasa, or both
+  </Step>
+  
+  <Step title="Configure Jiji parameters (if selected)">
+    **Start page:**
+    ```
+    Jiji start page [1]:
+    ```
+    
+    **URL mode:**
+    ```
+    Jiji URL mode
+      1. Auto detect total pages
+      2. Fixed number of pages
+      3. Convert expected listings to page count
+    Enter choice [1]:
+    ```
+    
+    - **Auto detect**: Spider discovers total pages automatically
+    - **Fixed number of pages**: Specify `max_pages` (e.g., 5)
+    - **Expected listings**: Specify `total_listing` (e.g., 200) and spider calculates pages needed
+  </Step>
+  
+  <Step title="Configure Meqasa parameters (if selected)">
+    **Start page:**
+    ```
+    Meqasa start page [1]:
+    ```
+    
+    **URL mode:**
+    ```
+    Meqasa URL mode
+      1. Auto detect total pages
+      2. Fixed number of pages
+    Enter choice [1]:
+    ```
+    
+    - **Auto detect**: Spider discovers total pages automatically
+    - **Fixed number of pages**: Specify `total_pages` (e.g., 5)
+  </Step>
+  
+  <Step title="Spider runs">
+    The selected URL spiders run and write to:
+    - `outputs/urls/jiji_urls.csv`
+    - `outputs/urls/meqasa_urls.csv`
+  </Step>
+</Steps>
+
+### Example Terminal Session
+
+```
+Choose action
+  1. Collect listing URLs
+  2. Scrape listing details
+  3. Resume listing scrape (missing URLs only)
+  4. Exit
+Enter choice [1]: 1
+
+Select source
+  1. Jiji only
+  2. Meqasa only
+  3. Both Jiji and Meqasa
+Enter choice [3]: 1
+
+Jiji start page [1]: 1
+
+Jiji URL mode
+  1. Auto detect total pages
+  2. Fixed number of pages
+  3. Convert expected listings to page count
+Enter choice [1]: 2
+
+Jiji max pages [5]: 10
+
+[Spider runs...]
+```
+
+## Action 2: Scrape Listing Details
+
+Scrapes full property details from collected URLs.
+
+<Steps>
+  <Step title="Select sites">
+    Choose Jiji, Meqasa, or both
+  </Step>
+  
+  <Step title="Specify URL CSV paths">
+    For each selected site:
+    ```
+    Jiji URL CSV [outputs/urls/jiji_urls.csv]:
+    ```
+    
+    Press Enter to use the default path, or enter a custom path.
+  </Step>
+  
+  <Step title="Spider runs">
+    The listing spiders read URLs from the CSV and write scraped data to:
+    - `outputs/data/jiji_data.csv`
+    - `outputs/data/meqasa_data.csv`
+  </Step>
+  
+  <Step title="Jiji auto-cleaning (if Jiji was scraped)">
+    After Jiji listing scrape completes, `clean.py` runs automatically and writes cleaned data to:
+    - `outputs/data/raw.csv`
+  </Step>
+</Steps>
+
+### Example Terminal Session
+
+```
+Choose action
+  1. Collect listing URLs
+  2. Scrape listing details
+  3. Resume listing scrape (missing URLs only)
+  4. Exit
+Enter choice [1]: 2
+
+Select source
+  1. Jiji only
+  2. Meqasa only
+  3. Both Jiji and Meqasa
+Enter choice [3]: 3
+
+Jiji URL CSV [outputs/urls/jiji_urls.csv]:
+Meqasa URL CSV [outputs/urls/meqasa_urls.csv]:
+
+[Spiders run...]
+[Jiji cleaning runs...]
+
+Done.
+```
+
+## Action 3: Resume Listing Scrape
+
+See the [Resume Mode](/usage/resume-mode) page for detailed documentation on this action.
+
+## Input Validation
+
+The interactive runner validates all inputs:
+
+- **Integer prompts**: Must be valid integers `>= 1`
+- **Yes/No prompts**: Accepts `y`, `yes`, `n`, `no` (case-insensitive)
+- **Choice prompts**: Accepts the number or the exact choice value
+- **Path prompts**: Converts relative paths to absolute paths from project root
+
+<Tip>
+Invalid inputs show a red error message and re-prompt until valid input is provided.
+</Tip>
+
+## File Paths
+
+All file paths in interactive mode:
+
+- Show as **relative paths** from project root for readability
+- Are converted to **absolute paths** internally
+- Can be entered as relative (resolved from project root) or absolute
+
+```
+Jiji URL CSV [outputs/urls/jiji_urls.csv]: custom/path.csv
+```
+
+This resolves to `<project_root>/custom/path.csv`.

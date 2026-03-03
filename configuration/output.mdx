@@ -1,0 +1,181 @@
+---
+title: 'Output Files'
+description: 'Output directory structure and file naming conventions'
+---
+
+## Overview
+
+All scraper outputs are written to CSV files under the `outputs/` directory. The structure separates URL collection from listing detail extraction.
+
+## Directory Structure
+
+The scraper automatically creates two output directories at startup:
+
+```python
+(PROJECT_ROOT / "outputs" / "urls").mkdir(parents=True, exist_ok=True)
+(PROJECT_ROOT / "outputs" / "data").mkdir(parents=True, exist_ok=True)
+```
+
+```
+outputs/
+├── urls/           # URL collection CSVs
+│   ├── jiji_urls.csv
+│   ├── meqasa_urls.csv
+│   ├── jiji_resume_queue.csv      (temporary)
+│   └── meqasa_resume_queue.csv    (temporary)
+└── data/           # Listing detail CSVs
+    ├── jiji_data.csv
+    ├── meqasa_data.csv
+    └── raw.csv                     (cleaned Jiji data)
+```
+
+## URL Collection Files
+
+### outputs/urls/jiji_urls.csv
+
+```python
+urls_csv=PROJECT_ROOT / "outputs" / "urls" / "jiji_urls.csv"
+```
+
+Contains all collected Jiji listing URLs with metadata:
+- `url` - Full listing URL
+- `page` - Result page number where URL was found
+- `fetch_date` - ISO timestamp of collection
+
+### outputs/urls/meqasa_urls.csv
+
+```python
+urls_csv=PROJECT_ROOT / "outputs" / "urls" / "meqasa_urls.csv"
+```
+
+Contains all collected Meqasa listing URLs with the same schema as Jiji.
+
+## Listing Detail Files
+
+### outputs/data/jiji_data.csv
+
+```python
+data_csv=PROJECT_ROOT / "outputs" / "data" / "jiji_data.csv"
+```
+
+Raw extracted data from Jiji listings including:
+- `url` - Listing URL
+- `fetch_date` - ISO timestamp
+- `title` - Property title
+- `location` - Geographic location
+- `house_type` - Property type
+- `bedrooms` - Number of bedrooms
+- `bathrooms` - Number of bathrooms
+- `price` - Listed price
+- `properties` - Serialized property attributes
+- `amenities` - Serialized amenities list
+- `description` - Full listing description
+
+### outputs/data/meqasa_data.csv
+
+```python
+data_csv=PROJECT_ROOT / "outputs" / "data" / "meqasa_data.csv"
+```
+
+Raw extracted data from Meqasa listings with dynamic schema. Base fields:
+- `url`
+- `Title`
+- `Price`
+- `Rate`
+- `Description`
+- `fetch_date`
+
+Additional columns vary by listing based on property detail tables.
+
+### outputs/data/raw.csv
+
+```python
+JIJI_RAW_OUTPUT_CSV = PROJECT_ROOT / "outputs" / "data" / "raw.csv"
+```
+
+Cleaned and normalized Jiji dataset. Generated automatically after Jiji listing scrapes complete via the `clean.py` script.
+
+## URL Deduplication
+
+All URL collection spiders implement deduplication to prevent duplicate entries:
+
+```python
+def read_url_set(path: Path, field_name: str = "url") -> set[str]:
+    urls: set[str] = set()
+    if not path.exists():
+        return urls
+
+    with open(path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            if url := (row.get(field_name) or "").strip():
+                urls.add(url)
+    return urls
+```
+
+The `read_url_set()` function loads existing URLs into a set for O(1) duplicate checking during scraping.
+
+## Resume Queue Files
+
+Resume mode generates temporary queue files containing only unscraped URLs:
+
+### outputs/urls/jiji_resume_queue.csv
+
+```python
+resume_queue_csv=PROJECT_ROOT / "outputs" / "urls" / "jiji_resume_queue.csv"
+```
+
+Temporary file created by comparing `jiji_urls.csv` against `jiji_data.csv`. Contains URLs present in the URL file but missing from the data file.
+
+### outputs/urls/meqasa_resume_queue.csv
+
+```python
+resume_queue_csv=PROJECT_ROOT / "outputs" / "urls" / "meqasa_resume_queue.csv"
+```
+
+Temporary file for Meqasa resume operations using the same logic.
+
+### Queue File Lifecycle
+
+```python
+def build_resume_queue(
+    urls_csv: Path, data_csv: Path, queue_csv: Path
+) -> tuple[int, int, int]:
+    # Reads urls_csv
+    # Reads data_csv
+    # Identifies missing URLs
+    # Writes queue_csv
+    return (source_total, already_scraped, pending_total)
+```
+
+Queue files are:
+1. Created before resume scraping starts
+2. Used as input to listing spiders
+3. Automatically deleted after scraping completes
+
+```python
+try:
+    run_spiders(jobs)
+finally:
+    for temp_file in cleanup_paths:
+        if temp_file.exists():
+            temp_file.unlink()
+```
+
+## CSV File Format
+
+All CSV files use:
+- **UTF-8 encoding**
+- **Header row** with column names
+- **QUOTE_ALL** quoting strategy for data integrity
+- **Newline normalization** via `newline=""` parameter
+
+## File Naming Conventions
+
+| File Pattern | Purpose |
+|--------------|----------|
+| `{site}_urls.csv` | URL collection output |
+| `{site}_data.csv` | Raw listing detail output |
+| `{site}_resume_queue.csv` | Temporary resume queue |
+| `raw.csv` | Cleaned final dataset |
+
+Where `{site}` is either `jiji` or `meqasa`.
